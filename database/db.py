@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -20,16 +21,56 @@ def connection(db_path: Path = DATABASE_PATH) -> sqlite3.Connection:
     return conn
 
 
+def _rebuild_questions_table(conn: sqlite3.Connection) -> None:
+    """Rebuild questions so MCQ-only NOT NULL/CHECK constraints stop blocking subjective rows."""
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.executescript("""
+        CREATE TABLE questions_new (
+            question_id TEXT PRIMARY KEY,
+            subject TEXT NOT NULL,
+            topic TEXT NOT NULL,
+            question TEXT NOT NULL,
+            question_type TEXT NOT NULL DEFAULT 'MCQ' CHECK(question_type IN ('MCQ', 'Subjective')),
+            difficulty TEXT NOT NULL CHECK(difficulty IN ('Easy', 'Medium', 'Hard')),
+            difficulty_rating REAL NOT NULL CHECK(difficulty_rating BETWEEN 0.1 AND 1.0),
+            option_a TEXT, option_b TEXT, option_c TEXT, option_d TEXT,
+            correct_answer TEXT, model_answer TEXT,
+            explanation TEXT NOT NULL
+        );
+        INSERT INTO questions_new
+            (question_id, subject, topic, question, question_type, difficulty, difficulty_rating,
+             option_a, option_b, option_c, option_d, correct_answer, model_answer, explanation)
+        SELECT question_id, subject, topic, question, 'MCQ', difficulty,
+               CASE difficulty WHEN 'Easy' THEN 0.25 WHEN 'Medium' THEN 0.55 ELSE 0.85 END,
+               option_a, option_b, option_c, option_d, correct_answer, NULL, explanation
+        FROM questions;
+        DROP TABLE questions;
+        ALTER TABLE questions_new RENAME TO questions;
+    """)
+    conn.execute("PRAGMA foreign_keys = ON")
+
+
 def initialise_database(db_path: Path = DATABASE_PATH) -> None:
     with connection(db_path) as conn:
         conn.executescript(SCHEMA)
         # Safe migrations keep early research databases usable as the prototype evolves.
         student_columns = {row[1] for row in conn.execute("PRAGMA table_info(students)")}
         attempt_columns = {row[1] for row in conn.execute("PRAGMA table_info(attempts)")}
+        question_columns = {row[1] for row in conn.execute("PRAGMA table_info(questions)")}
         if "password_hash" not in student_columns:
             conn.execute("ALTER TABLE students ADD COLUMN password_hash TEXT")
+        if "email" not in student_columns:
+            conn.execute("ALTER TABLE students ADD COLUMN email TEXT")
         if "confidence_rating" not in attempt_columns:
             conn.execute("ALTER TABLE attempts ADD COLUMN confidence_rating INTEGER CHECK(confidence_rating BETWEEN 1 AND 5)")
+        if "answer_text" not in attempt_columns:
+            conn.execute("ALTER TABLE attempts ADD COLUMN answer_text TEXT")
+        if "score" not in attempt_columns:
+            conn.execute("ALTER TABLE attempts ADD COLUMN score REAL CHECK(score BETWEEN 0.0 AND 1.0)")
+        if "question_type" not in question_columns:
+            _rebuild_questions_table(conn)
+        if "difficulty_rating" not in {row[1] for row in conn.execute("PRAGMA table_info(questions)")}:
+            conn.execute("ALTER TABLE questions ADD COLUMN difficulty_rating REAL NOT NULL DEFAULT 0.55")
 
 
 def seed_question_bank(questions: Iterable[dict], db_path: Path = DATABASE_PATH) -> None:
@@ -44,11 +85,79 @@ def seed_question_bank(questions: Iterable[dict], db_path: Path = DATABASE_PATH)
         )
         conn.executemany(
             """INSERT OR REPLACE INTO questions
-               (question_id, subject, topic, question, difficulty, option_a, option_b,
-                option_c, option_d, correct_answer, explanation)
-               VALUES (:question_id, :subject, :topic, :question, :difficulty, :option_a,
-                :option_b, :option_c, :option_d, :correct_answer, :explanation)""",
+               (question_id, subject, topic, question, question_type, difficulty, difficulty_rating,
+                option_a, option_b, option_c, option_d, correct_answer, model_answer, explanation)
+               VALUES (:question_id, :subject, :topic, :question, :question_type, :difficulty,
+                :difficulty_rating, :option_a, :option_b, :option_c, :option_d, :correct_answer,
+                :model_answer, :explanation)""",
             rows,
+        )
+
+
+def enqueue_questions(
+    student_id: str,
+    items: Iterable[dict],
+    due_at: str,
+    reason: str = "",
+    db_path: Path = DATABASE_PATH,
+) -> int:
+    """Queue (subject, topic, question_id) records for future practice; skip already-pending items."""
+    initialise_database(db_path)
+    queued = 0
+    with connection(db_path) as conn:
+        pending = {
+            row["question_id"]
+            for row in conn.execute(
+                "SELECT question_id FROM practice_queue WHERE student_id=? AND status='pending'", (student_id,)
+            )
+        }
+        for item in items:
+            if item["question_id"] in pending:
+                continue
+            conn.execute(
+                """INSERT INTO practice_queue(student_id, question_id, subject, topic, status, reason, queued_at, due_at)
+                   VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)""",
+                (student_id, item["question_id"], item["subject"], item["topic"], reason,
+                 datetime.now(timezone.utc).isoformat(), due_at),
+            )
+            pending.add(item["question_id"])
+            queued += 1
+    return queued
+
+
+def due_queue_items(
+    student_id: str,
+    now_iso: str,
+    subject: str | None = None,
+    limit: int = 1,
+    db_path: Path = DATABASE_PATH,
+) -> list[sqlite3.Row]:
+    query = """SELECT * FROM practice_queue
+               WHERE student_id=? AND status='pending' AND due_at<=?
+               ORDER BY due_at, queue_id LIMIT ?"""
+    params: tuple = (student_id, now_iso, limit)
+    if subject is not None:
+        query = query.replace("AND due_at<=?", "AND due_at<=? AND subject=?")
+        params = (student_id, now_iso, subject, limit)
+    with connection(db_path) as conn:
+        return list(conn.execute(query, params).fetchall())
+
+
+def pending_queue_items(student_id: str, db_path: Path = DATABASE_PATH) -> list[sqlite3.Row]:
+    with connection(db_path) as conn:
+        return list(
+            conn.execute(
+                "SELECT * FROM practice_queue WHERE student_id=? AND status='pending' ORDER BY due_at, queue_id",
+                (student_id,),
+            ).fetchall()
+        )
+
+
+def complete_queue_item(student_id: str, question_id: str, db_path: Path = DATABASE_PATH) -> None:
+    with connection(db_path) as conn:
+        conn.execute(
+            "UPDATE practice_queue SET status='completed' WHERE student_id=? AND question_id=? AND status='pending'",
+            (student_id, question_id),
         )
 
 

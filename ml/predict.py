@@ -21,10 +21,14 @@ def status_for_probability(probability: float) -> str:
 
 def explain_weakness(row: pd.Series) -> dict:
     reasons = []
-    if row["recent_accuracy_5"] < 0.55: reasons.append(f"recent accuracy is {row['recent_accuracy_5']:.0%}")
-    if row["topic_avg_response_time"] > 120: reasons.append(f"average response time is {row['topic_avg_response_time']:.0f} seconds")
-    if row["difficulty_accuracy"] < 0.45: reasons.append(f"{row['difficulty']}-difficulty accuracy is {row['difficulty_accuracy']:.0%}")
-    if row["improvement_trend"] < -0.10: reasons.append("performance has declined across recent attempts")
+    topic_attempts = int(row.get("topic_prior_attempts", row["prior_attempts"]))
+    if topic_attempts == 0:
+        reasons.append("no attempts yet on this topic — estimate uses the model's prior")
+    else:
+        if row["recent_accuracy_5"] < 0.55: reasons.append(f"recent accuracy is {row['recent_accuracy_5']:.0%}")
+        if row["topic_avg_response_time"] > 120: reasons.append(f"average response time is {row['topic_avg_response_time']:.0f} seconds")
+        if row["difficulty_accuracy"] < 0.45: reasons.append(f"{row['difficulty']}-difficulty accuracy is {row['difficulty_accuracy']:.0%}")
+        if row["improvement_trend"] < -0.10: reasons.append("performance has declined across recent attempts")
     if not reasons: reasons.append("limited evidence is available; continue diagnostic practice")
     return {"reasons": reasons, "recommended_action": f"Practise {row['topic']} at {row['difficulty']} level, then reassess."}
 
@@ -39,6 +43,8 @@ def predict_student_mastery(model_path: Path, attempts: pd.DataFrame, questions:
     result["explanation"] = result.apply(explain_weakness, axis=1)
     result["data_label"] = "Predictions based on SYNTHETIC / SIMULATED practice data"
     with connection(db_path) as conn:
+        # Snapshot semantics: keep only the latest prediction set per student and model.
+        conn.execute("DELETE FROM mastery_predictions WHERE student_id=? AND model_name=?", (student_id, model_path.stem))
         rows = [(
             student_id, r.subject, r.topic, float(r.mastery_probability), r.status,
             model_path.stem, datetime.now(timezone.utc).isoformat(), json.dumps(r.explanation),

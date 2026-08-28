@@ -6,6 +6,7 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS students (
     student_id TEXT PRIMARY KEY,
     display_name TEXT NOT NULL,
+    email TEXT,
     password_hash TEXT,
     is_synthetic INTEGER NOT NULL DEFAULT 0 CHECK(is_synthetic IN (0, 1)),
     created_at TEXT NOT NULL,
@@ -29,12 +30,15 @@ CREATE TABLE IF NOT EXISTS questions (
     subject TEXT NOT NULL,
     topic TEXT NOT NULL,
     question TEXT NOT NULL,
+    question_type TEXT NOT NULL DEFAULT 'MCQ' CHECK(question_type IN ('MCQ', 'Subjective')),
     difficulty TEXT NOT NULL CHECK(difficulty IN ('Easy', 'Medium', 'Hard')),
-    option_a TEXT NOT NULL,
-    option_b TEXT NOT NULL,
-    option_c TEXT NOT NULL,
-    option_d TEXT NOT NULL,
-    correct_answer TEXT NOT NULL CHECK(correct_answer IN ('A', 'B', 'C', 'D')),
+    difficulty_rating REAL NOT NULL CHECK(difficulty_rating BETWEEN 0.1 AND 1.0),
+    option_a TEXT,
+    option_b TEXT,
+    option_c TEXT,
+    option_d TEXT,
+    correct_answer TEXT,
+    model_answer TEXT,
     explanation TEXT NOT NULL
 );
 
@@ -51,7 +55,9 @@ CREATE TABLE IF NOT EXISTS attempts (
     timestamp TEXT NOT NULL,
     session_id TEXT NOT NULL,
     confidence_rating INTEGER CHECK(confidence_rating BETWEEN 1 AND 5),
-    is_synthetic INTEGER NOT NULL DEFAULT 0 CHECK(is_synthetic IN (0, 1))
+    is_synthetic INTEGER NOT NULL DEFAULT 0 CHECK(is_synthetic IN (0, 1)),
+    answer_text TEXT,
+    score REAL CHECK(score BETWEEN 0.0 AND 1.0)
 );
 
 CREATE INDEX IF NOT EXISTS idx_attempts_student_time ON attempts(student_id, timestamp);
@@ -87,4 +93,18 @@ CREATE TABLE IF NOT EXISTS recommendations (
     score REAL NOT NULL,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS practice_queue (
+    queue_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    student_id TEXT NOT NULL REFERENCES students(student_id),
+    question_id TEXT NOT NULL REFERENCES questions(question_id),
+    subject TEXT NOT NULL,
+    topic TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'completed')),
+    reason TEXT NOT NULL DEFAULT '',
+    queued_at TEXT NOT NULL,
+    due_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_queue_student_due ON practice_queue(student_id, status, due_at);
 """

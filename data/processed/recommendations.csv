@@ -1,6 +1,6 @@
 student_id,question_id,subject,topic,recommended_difficulty,mastery_probability,score,reason
 S00001,Q0304A,Operating Systems,Memory Management,Easy,0.37770718280747134,0.7723,Weak mastery (38%); target difficulty is Easy; new question.
 S00001,Q0301A,Operating Systems,Processes,Easy,0.3824926564250443,0.7675,Weak mastery (38%); target difficulty is Easy; new question.
-S00001,Q0309A,Operating Systems,I/O Management,Easy,0.30176186078355655,0.6982,Weak mastery (30%); target difficulty is Easy; spaced revision.
-S00001,Q0403A,Computer Networks,TCP,Easy,0.45867084606581415,0.6913,Weak mastery (46%); target difficulty is Easy; new question.
+S00001,Q0309A,Operating Systems,I/O Management,Easy,0.3017618607835565,0.6982,Weak mastery (30%); target difficulty is Easy; spaced revision.
+S00001,Q0403A,Computer Networks,TCP,Easy,0.4586708460658142,0.6913,Weak mastery (46%); target difficulty is Easy; new question.
 S00001,Q0402B,Computer Networks,TCP/IP,Medium,0.39538126254842354,0.6746,Weak mastery (40%); target difficulty is Easy; new question.

@@ -75,7 +75,7 @@ def build_feature_dataset(attempts: pd.DataFrame, truth: pd.DataFrame) -> pd.Dat
                 "student_id": student_id, "timestamp": event.timestamp.isoformat(), "attempt_number": event.attempt_number,
                 "subject": event.subject, "topic": event.topic, "difficulty": event.difficulty,
                 "prior_attempts": prior_count, "overall_accuracy": overall_acc,
-                "subject_accuracy": subject_acc, "topic_accuracy": topic_acc,
+                "subject_accuracy": subject_acc, "topic_prior_attempts": topic_count, "topic_accuracy": topic_acc,
                 "recent_accuracy_5": recent5, "recent_accuracy_10": recent10,
                 "topic_avg_response_time": topic_avg_time, "topic_response_time_std": topic_time_std,
                 "difficulty_accuracy": difficulty_acc, "previous_correct": previous,
@@ -100,7 +100,7 @@ def current_topic_feature_rows(attempts: pd.DataFrame, student_id: str, topics: 
     events = attempts[attempts.student_id == student_id].copy()
     if events.empty:
         raise ValueError(f"No attempts available for {student_id}")
-    events["timestamp"] = pd.to_datetime(events["timestamp"], utc=True)
+    events["timestamp"] = pd.to_datetime(events["timestamp"], format="ISO8601", utc=True)
     now = events.timestamp.max()
     rows = []
     for item in topics[["subject", "topic"]].drop_duplicates().itertuples(index=False):
@@ -122,7 +122,7 @@ def current_topic_feature_rows(attempts: pd.DataFrame, student_id: str, topics: 
         rows.append({
             "student_id": student_id, "subject": item.subject, "topic": item.topic, "difficulty": desired,
             "prior_attempts": float(len(events)), "overall_accuracy": accuracy(events),
-            "subject_accuracy": accuracy(subject_history), "topic_accuracy": accuracy(history),
+            "subject_accuracy": accuracy(subject_history), "topic_prior_attempts": float(len(history)), "topic_accuracy": accuracy(history),
             "recent_accuracy_5": float(np.mean(recent[-5:])) if recent else 0.5,
             "recent_accuracy_10": float(np.mean(recent)) if recent else 0.5,
             "topic_avg_response_time": time_mean, "topic_response_time_std": time_std,

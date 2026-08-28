@@ -36,3 +36,17 @@ def learning_curve(attempts: pd.DataFrame, output_path: Path) -> Path:
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
     return output_path
+
+
+def learning_curve_frame(attempts: pd.DataFrame) -> pd.DataFrame:
+    """Return the rolling-correctness curve as a DataFrame for UI charts.
+
+    Index is the chronological attempt sequence, column is rolling mean of
+    `is_correct`. Empty input yields an empty DataFrame.
+    """
+    if attempts.empty:
+        return pd.DataFrame()
+    data = attempts.copy().sort_values(["student_id", "attempt_number"])
+    grouped = data.groupby("attempt_number", as_index=False).is_correct.mean()
+    grouped["rolling_accuracy"] = grouped.is_correct.rolling(5, min_periods=1).mean()
+    return grouped.set_index("attempt_number")[["rolling_accuracy"]]

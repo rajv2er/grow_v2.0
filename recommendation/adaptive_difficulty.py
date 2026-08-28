@@ -5,6 +5,8 @@ import pandas as pd
 
 
 ORDER = ["Easy", "Medium", "Hard"]
+LEVEL_RATING = {"Easy": 0.25, "Medium": 0.55, "Hard": 0.85}
+TARGET_BAND = 0.15
 
 
 def next_difficulty(topic_attempts: pd.DataFrame, mastery_probability: float) -> str:
@@ -28,3 +30,14 @@ def next_difficulty(topic_attempts: pd.DataFrame, mastery_probability: float) ->
     if mastery_probability > 0.80:
         return "Hard"
     return current
+
+
+def target_difficulty_rating(topic_attempts: pd.DataFrame, mastery_probability: float) -> float:
+    """Numeric target in [0.1, 1.0]: the ladder's level blended with estimated mastery.
+
+    Selection then looks for items within target ± TARGET_BAND, so adaptation is
+    continuous instead of jumping across three coarse levels.
+    """
+    level = next_difficulty(topic_attempts, mastery_probability)
+    blended = 0.5 * LEVEL_RATING[level] + 0.5 * mastery_probability
+    return round(min(1.0, max(0.1, blended)), 2)

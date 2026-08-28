@@ -1,8 +1,9 @@
-"""A deterministic 150-question bank with three levels for every concept.
+"""A deterministic 200-question bank: MCQs at three levels plus one subjective item per concept.
 
-Each topic has Easy, Medium, and Hard items. This is essential to the adaptive
-policy: every recommended transition can be fulfilled by a real item instead of
-silently falling back to another difficulty.
+Each topic has Easy, Medium, and Hard MCQs and a subjective explanation question,
+every one carrying a numeric difficulty_rating in [0.1, 1.0]. This is essential to
+the adaptive policy: every recommended target band can be fulfilled by a real item
+instead of silently falling back to another difficulty.
 """
 from __future__ import annotations
 
@@ -77,33 +78,45 @@ TOPIC_FACTS: dict[str, list[tuple[str, str, list[str], str]]] = {
 
 def build_question_bank() -> list[dict]:
     questions: list[dict] = []
+    labels = ["A", "B", "C", "D"]
+    level_ratings = {"Easy": 0.25, "Medium": 0.55, "Hard": 0.85}
     for subject_index, (subject, facts) in enumerate(TOPIC_FACTS.items(), start=1):
         for topic_index, (topic, fact, distractors, base_difficulty) in enumerate(facts, start=1):
             prefix = f"Q{subject_index:02d}{topic_index:02d}"
-            choices = [fact, *distractors]
+            prompts = [
+                ("A", "Easy", f"Which statement best describes {topic}?"),
+                ("B", "Medium", f"In a practical problem involving {topic}, which principle should guide your solution?"),
+                ("C", "Hard", f"Which design decision is most consistent with the core principle of {topic}?"),
+            ]
+            for difficulty_index, (suffix, difficulty, prompt) in enumerate(prompts):
+                correct_index = (subject_index + topic_index + difficulty_index) % len(labels)
+                options = list(distractors)
+                options.insert(correct_index, fact)
+                questions.append({
+                    "question_id": f"{prefix}{suffix}", "subject": subject, "topic": topic,
+                    "question": prompt, "question_type": "MCQ", "difficulty": difficulty,
+                    "difficulty_rating": _rating(level_ratings[difficulty], subject_index, topic_index, difficulty_index),
+                    "option_a": options[0], "option_b": options[1], "option_c": options[2], "option_d": options[3],
+                    "correct_answer": labels[correct_index], "model_answer": None,
+                    "explanation": fact.capitalize() + ".",
+                })
             questions.append({
-                "question_id": f"{prefix}A", "subject": subject, "topic": topic,
-                "question": f"Which statement best describes {topic}?",
-                "difficulty": "Easy",
-                "option_a": choices[0], "option_b": choices[1], "option_c": choices[2], "option_d": choices[3],
-                "correct_answer": "A", "explanation": fact.capitalize() + ".",
+                "question_id": f"{prefix}S", "subject": subject, "topic": topic,
+                "question": f"Explain the core principle of {topic} in your own words, and describe one situation where you would apply it.",
+                "question_type": "Subjective", "difficulty": base_difficulty,
+                "difficulty_rating": _rating(level_ratings[base_difficulty], subject_index, topic_index, 3),
+                "option_a": None, "option_b": None, "option_c": None, "option_d": None,
+                "correct_answer": None, "model_answer": fact.capitalize() + ".",
+                "explanation": f"Model answer: {fact.capitalize()}.",
             })
-            questions.append({
-                "question_id": f"{prefix}B", "subject": subject, "topic": topic,
-                "question": f"In a practical problem involving {topic}, which principle should guide your solution?",
-                "difficulty": "Medium",
-                "option_a": choices[1], "option_b": choices[2], "option_c": choices[0], "option_d": choices[3],
-                "correct_answer": "C", "explanation": fact.capitalize() + ".",
-            })
-            questions.append({
-                "question_id": f"{prefix}C", "subject": subject, "topic": topic,
-                "question": f"Which design decision is most consistent with the core principle of {topic}?",
-                "difficulty": "Hard",
-                "option_a": choices[2], "option_b": choices[3], "option_c": choices[1], "option_d": choices[0],
-                "correct_answer": "D", "explanation": fact.capitalize() + ".",
-            })
-    assert len(questions) == 150, "Every topic must provide Easy, Medium, and Hard practice."
+    assert len(questions) == 200, "Every topic must provide Easy, Medium, Hard MCQs plus one subjective item."
     return questions
+
+
+def _rating(base: float, subject_index: int, topic_index: int, variant_index: int, step: float = 0.10) -> float:
+    """Deterministic spread of ±1 step around each band centre so the ±0.15 band has real items."""
+    offset = ((subject_index + topic_index + variant_index) % 3 - 1) * step
+    return round(min(1.0, max(0.1, base + offset)), 2)
 
 
 def export_question_bank(path: Path) -> Path:

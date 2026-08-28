@@ -13,5 +13,7 @@ def test_features_use_only_prior_history_not_future_attempts():
         {"student_id": "S1", "attempt_number": 2, "timestamp": "2025-01-02T00:00:00+00:00", "synthetic_mastered_label": 0, "synthetic_true_mastery": 0.4},
     ])
     features = build_feature_dataset(attempts, truth)
+    assert features.loc[0, "topic_prior_attempts"] == 0
+    assert features.loc[1, "topic_prior_attempts"] == 1
     assert features.loc[0, "topic_accuracy"] == 0.5  # no prior evidence
     assert features.loc[1, "topic_accuracy"] == 1.0  # first response only; never future response
