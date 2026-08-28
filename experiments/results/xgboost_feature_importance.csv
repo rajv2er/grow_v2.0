@@ -1,0 +1,71 @@
+feature,importance
+numeric__subject_accuracy,0.04503142
+numeric__overall_accuracy,0.038081758
+categorical__topic_Memory Management,0.030964497
+numeric__topic_avg_response_time,0.027497945
+categorical__subject_Computer Networks,0.025171738
+numeric__topic_response_time_std,0.022024592
+categorical__topic_DNS,0.021757513
+numeric__topic_accuracy,0.021492653
+categorical__subject_Software Engineering,0.021220779
+categorical__topic_Graphs,0.020735376
+categorical__topic_Threads,0.01994998
+categorical__topic_SQL,0.019775027
+categorical__difficulty_Easy,0.019680886
+categorical__topic_Network Security,0.019480199
+numeric__difficulty_accuracy,0.019472728
+categorical__topic_HTTP,0.01900667
+categorical__subject_Operating Systems,0.018644124
+numeric__prior_attempts,0.018584706
+categorical__subject_DSA,0.018386262
+categorical__topic_Synchronization,0.018356843
+categorical__topic_Routing,0.01833673
+categorical__topic_Strings,0.018188963
+categorical__topic_Project Management,0.01815151
+categorical__topic_TCP/IP,0.018087545
+categorical__topic_SRS,0.017815312
+categorical__topic_UML,0.017224146
+numeric__hours_since_topic_attempt,0.016803501
+categorical__topic_Heap,0.016127517
+categorical__topic_Paging,0.016067687
+categorical__topic_Arrays,0.016030518
+categorical__topic_Transactions,0.015509608
+categorical__topic_DHCP,0.015439113
+categorical__difficulty_Medium,0.015422874
+categorical__topic_Agile,0.014865212
+categorical__topic_I/O Management,0.014810068
+categorical__topic_Deadlocks,0.014135985
+categorical__topic_Relational Algebra,0.013992658
+categorical__topic_CPU Scheduling,0.013689403
+categorical__topic_Design Patterns,0.013382104
+categorical__subject_DBMS,0.013353282
+categorical__topic_UDP,0.013196804
+numeric__previous_correct,0.0129359085
+categorical__topic_Indexing,0.012918769
+categorical__topic_ER Model,0.012632333
+categorical__topic_Joins,0.01262468
+numeric__recent_accuracy_5,0.012602817
+categorical__topic_Waterfall,0.0124763595
+numeric__recent_accuracy_10,0.012377979
+categorical__topic_Trees,0.0119615
+categorical__topic_Recursion,0.011751378
+categorical__difficulty_Hard,0.01129674
+categorical__topic_Linked Lists,0.011033773
+categorical__topic_Normalization,0.010661829
+categorical__topic_Processes,0.009831833
+categorical__topic_Dynamic Programming,0.009665808
+categorical__topic_Software Quality,0.009346527
+categorical__topic_TCP,0.008004751
+categorical__topic_Keys,0.00755077
+categorical__topic_Concurrency Control,0.0072393194
+categorical__topic_Security,0.007140656
+categorical__topic_Hashing,0.0
+categorical__topic_DBMS Basics,0.0
+numeric__improvement_trend,0.0
+categorical__topic_Testing,0.0
+categorical__topic_Stack & Queue,0.0
+categorical__topic_SDLC,0.0
+categorical__topic_OSI,0.0
+categorical__topic_File Systems,0.0
+categorical__topic_Git/Version Control,0.0
+categorical__topic_IP Addressing,0.0

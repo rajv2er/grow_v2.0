@@ -1,0 +1,14 @@
+{
+  "simulation": null,
+  "dataset_statistics": {
+    "data_label": "SYNTHETIC / SIMULATED \u2014 NOT REAL STUDENT DATA",
+    "attempts": 1800,
+    "students": 30,
+    "subjects": 5,
+    "topics": 50,
+    "overall_accuracy": 0.49944444444444447,
+    "mean_response_seconds": 90.99776111111112
+  },
+  "best_model_by_validation_f1": "xgboost",
+  "metrics_file": "/Users/rajveer/IdeaProjects/grow_v2.0/experiments/results/model_comparison.csv"
+}

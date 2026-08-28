@@ -1,0 +1,22 @@
+{
+  "label": "Models trained and evaluated on SYNTHETIC / SIMULATED data only.",
+  "split": "GroupShuffleSplit by student: 70% train, 15% validation, 15% test",
+  "feature_columns": [
+    "prior_attempts",
+    "overall_accuracy",
+    "subject_accuracy",
+    "topic_accuracy",
+    "recent_accuracy_5",
+    "recent_accuracy_10",
+    "topic_avg_response_time",
+    "topic_response_time_std",
+    "difficulty_accuracy",
+    "previous_correct",
+    "improvement_trend",
+    "hours_since_topic_attempt",
+    "subject",
+    "topic",
+    "difficulty"
+  ],
+  "target": "synthetic_mastered_label (latent mastery >= 0.70)"
+}

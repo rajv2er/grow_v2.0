@@ -1,0 +1,29 @@
+{
+  "run_id": "synthetic_f64633b2ea",
+  "created_at": "2026-08-28T02:51:59.719724+00:00",
+  "label": "SYNTHETIC / SIMULATED DATA \u2014 NOT REAL STUDENT RESEARCH DATA",
+  "config": {
+    "number_of_students": 30,
+    "attempts_per_student": 60,
+    "random_seed": 42,
+    "learning_rate": 0.035,
+    "noise_level": 0.08,
+    "difficulty_distribution": {
+      "Easy": 0.4,
+      "Medium": 0.4,
+      "Hard": 0.2
+    },
+    "ability_distribution": {
+      "emerging": 0.18,
+      "developing": 0.38,
+      "proficient": 0.3,
+      "advanced": 0.14
+    },
+    "start_date": "2025-01-01"
+  },
+  "row_counts": {
+    "students": 30,
+    "questions": 150,
+    "attempts": 1800
+  }
+}
