@@ -143,4 +143,19 @@ CREATE TABLE IF NOT EXISTS attempt_feedback (
 );
 
 CREATE INDEX IF NOT EXISTS idx_feedback_student ON attempt_feedback(student_id);
+
+CREATE TABLE IF NOT EXISTS recommendation_explanations (
+    student_id TEXT NOT NULL REFERENCES students(student_id),
+    subject TEXT NOT NULL,
+    topic TEXT NOT NULL,
+    mastery_probability REAL NOT NULL,
+    ema_mastery REAL,
+    evidence_attempts INTEGER NOT NULL,
+    confidence REAL NOT NULL,
+    explanation_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (student_id, subject, topic)
+);
+
+CREATE INDEX IF NOT EXISTS idx_recexp_student ON recommendation_explanations(student_id);
 """

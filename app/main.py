@@ -432,8 +432,10 @@ def _apply_topic_prefill(q: pd.DataFrame, attempts: pd.DataFrame) -> None:
     """If the user clicked 'Start session on this topic' elsewhere, honour it.
 
     Picks the first unseen Easy MCQ in the requested (subject, topic) and
-    starts a session there. Falls back to the recommender's adaptive pick if
-    the prefill target is already exhausted.
+    starts a session there. Falls back to (in order) any unseen MCQ in the
+    topic, any unseen question of any type in the topic, and finally any
+    question in the topic. If even that fails, the recommender's adaptive
+    path takes over.
     """
     target = st.session_state.pop("_prefill_topic", None)
     if target is None:
@@ -449,12 +451,8 @@ def _apply_topic_prefill(q: pd.DataFrame, attempts: pd.DataFrame) -> None:
     st.session_state.quiz_topic = topic
     st.session_state.quiz_topic_served = 0
     seen = set(attempts.question_id) if not attempts.empty else set()
-    candidates = q[
-        (q.subject == subject) & (q.topic == topic) & (q.difficulty == "Easy")
-    ].sort_values("question_id")
-    if not candidates.empty:
-        unseen = candidates[~candidates.question_id.isin(seen)]
-        pick = unseen.iloc[0] if not unseen.empty else candidates.iloc[0]
+    pick = _pick_question_in_topic(q, subject, topic, seen)
+    if pick is not None:
         st.session_state.active_question = pick.question_id
         st.session_state.last_served_id = pick.question_id
         st.session_state.why = (
@@ -465,6 +463,24 @@ def _apply_topic_prefill(q: pd.DataFrame, attempts: pd.DataFrame) -> None:
         st.session_state.answered = False
         st.session_state.mastery_before = None
         st.session_state.pop("result", None)
+
+
+def _pick_question_in_topic(q: pd.DataFrame, subject: str, topic: str, seen: set[str]):
+    """Pick any question in (subject, topic) with progressive fallbacks."""
+    in_topic = q[(q.subject == subject) & (q.topic == topic)]
+    if in_topic.empty:
+        return None
+    # 1) unseen Easy MCQ
+    pool = in_topic[(in_topic.difficulty == "Easy") & (in_topic.question_type == "MCQ")]
+    pool = pool[~pool.question_id.isin(seen)]
+    if not pool.empty:
+        return pool.sort_values("question_id").iloc[0]
+    # 2) any unseen question in topic
+    pool = in_topic[~in_topic.question_id.isin(seen)]
+    if not pool.empty:
+        return pool.sort_values("question_id").iloc[0]
+    # 3) any question at all in topic
+    return in_topic.sort_values("question_id").iloc[0]
 
 
 def _start_session(subject: str) -> None:
@@ -629,8 +645,21 @@ def next_question(
         sid, held_rows if held else subject_predictions, attempts, q, limit=1, exclude=exclude
     )
     if recs.empty:
-        item = initial_diagnostic(q, attempts, subject)
-        return item, f"{subject} diagnostic revision question.", _topic_mastery(p, subject, item.topic)
+        # Last-ditch fallback: pick any unseen question in the current
+        # subject. This prevents a "no question found" blank screen when
+        # the recommender's exclusion set has wiped the topic.
+        seen_ids = set(attempts.question_id) if not attempts.empty else set()
+        in_subject = q[q.subject == subject]
+        candidates = in_subject[~in_subject.question_id.isin(seen_ids)]
+        if candidates.empty:
+            candidates = in_subject
+        if candidates.empty:
+            return pd.Series(dtype=object), "", None
+        item = candidates.sort_values("question_id").iloc[0]
+        return item, (
+            f"{subject} fallback question — no recommendations available for the "
+            "selected target band. Answering this still updates your mastery."
+        ), _topic_mastery(p, subject, item.topic)
 
     rec = recs.iloc[0]
     item = q[q.question_id == rec.question_id].iloc[0]
@@ -735,20 +764,51 @@ def ensure_demo_warmup(student_id: str) -> int:
 
 
 def latest_explanations(sid: str) -> dict[tuple[str, str], dict]:
-    """Return {(subject, topic): explanation_dict} for the most recent recommender run."""
+    """Return {(subject, topic): explanation_dict} from the per-topic snapshot.
+
+    Falls back to building an explanation on the fly for any topic not yet
+    snapshotted, using the same explainer the recommender uses. This
+    guarantees the UI always has a "Why?" for every priority topic.
+    """
     import json as _json
+    from ml.recommendation_explainer import build_explanation
+    from ml.online_mastery import read_mastery
+    out: dict[tuple[str, str], dict] = {}
     with connection() as conn:
         rows = conn.execute(
-            "SELECT subject, topic, explanation_json FROM recommendations "
-            "WHERE student_id=? AND explanation_json IS NOT NULL",
+            "SELECT subject, topic, explanation_json FROM recommendation_explanations "
+            "WHERE student_id=?",
             (sid,),
         ).fetchall()
-    out: dict[tuple[str, str], dict] = {}
     for r in rows:
         try:
             out[(r["subject"], r["topic"])] = _json.loads(r["explanation_json"])
         except (TypeError, ValueError):
             continue
+    # Backfill any (subject, topic) currently in predictions but not yet snapshotted.
+    try:
+        p = predictions_for(sid, user_attempts(sid), questions_df())
+    except Exception:
+        p = pd.DataFrame()
+    if not p.empty:
+        ema = read_mastery(sid)
+        ema_by_topic = {
+            (r.subject, r.topic): float(r.mastery_estimate)
+            for r in ema.itertuples(index=False)
+        } if not ema.empty else {}
+        attempts = user_attempts(sid)
+        for row in p.itertuples(index=False):
+            key = (row.subject, row.topic)
+            if key in out:
+                continue
+            hist = attempts[(attempts.subject == row.subject) & (attempts.topic == row.topic)]
+            out[key] = build_explanation(
+                subject=row.subject,
+                topic=row.topic,
+                mastery_probability=float(row.mastery_probability),
+                topic_history=hist,
+                ema_estimate=ema_by_topic.get(key),
+            )
     return out
 
 
@@ -928,12 +988,31 @@ def dashboard_page(q: pd.DataFrame) -> None:
         return
     sid = st.session_state.user_id
     name = st.session_state.get("user_name", "Learner")
+    first = name.split()[0]
     attempts = user_attempts(sid)
+    streak = streak_days(attempts)
+    p = predictions_for(sid, attempts, q)
+    overall = float(p.mastery_probability.mean()) if not p.empty else (
+        float(attempts.is_correct.mean()) if not attempts.empty else 0.0
+    )
+    hour = datetime.now().hour
+    greeting = "Good morning" if hour < 12 else "Good afternoon" if hour < 18 else "Good evening"
 
+    # --- Top hero: greeting + streak + overall mastery bar --------------------
     st.markdown(
-        f"<h2 style='margin-bottom:0'>Good day, {name.split()[0]}.</h2>"
-        "<p style='color:#9aa6c0; margin-top:4px'>Here is your learning intelligence, "
-        "calculated from your actual attempt history and the trained mastery model.</p>",
+        f"<div class='ml-card-elev' style='padding:24px 28px'>"
+        f"<div style='display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px'>"
+        f"<div><div style='font-size:1.55rem;font-weight:600'>{greeting}, {first}.</div>"
+        f"<div style='color:#9aa6c0;margin-top:4px'>Here is your learning intelligence for today.</div></div>"
+        f"<div style='display:flex;align-items:center;gap:8px;background:#16213b;border:1px solid #2b3a5e;"
+        f"padding:8px 14px;border-radius:999px;font-weight:600'>"
+        f"<span style='color:#f59e0b'>🔥</span> {streak} day streak</div></div>"
+        f"<div style='margin-top:18px;display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px'>"
+        f"<div style='color:#9aa6c0;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.08em'>Overall mastery</div>"
+        f"<div style='font-size:2.2rem;font-weight:700'>{overall:.0%}</div></div>"
+        f"<div class='ml-progress' style='margin-top:8px;height:10px'>"
+        f"<div style='width:{overall*100:.1f}%'></div></div>"
+        f"</div>",
         unsafe_allow_html=True,
     )
 
@@ -944,113 +1023,94 @@ def dashboard_page(q: pd.DataFrame) -> None:
         )
         return
 
-    p = predictions_for(sid, attempts, q)
     if p.empty:
-        info_banner("Mastery probabilities are not available yet. Train the baseline in the ML Experiments page.")
+        info_banner("Mastery probabilities not available yet. Train the baseline in ML Experiments to unlock personalised insights.")
 
-    # KPI row
-    accuracy = float(attempts.is_correct.mean())
-    overall_mastery = float(p.mastery_probability.mean()) if not p.empty else accuracy
-    topics_mastered = (
-        int((p.mastery_probability >= SUBJECT_MASTERY_THRESHOLD).sum()) if not p.empty else 0
-    )
-    total_topics = int(p.topic.nunique()) if not p.empty else 0
-    streak = streak_days(attempts)
+    # --- Two big action cards -------------------------------------------------
+    weakest = p.iloc[0] if not p.empty else None
+    strongest = p.iloc[-1] if not p.empty and len(p) > 1 else None
+    explanations = latest_explanations(sid)
+    col_w, col_s = st.columns(2)
+    with col_w:
+        if weakest is not None:
+            wl_mastery = float(weakest.mastery_probability)
+            wl_expl = explanations.get((weakest.subject, weakest.topic))
+            top_signal = ""
+            if wl_expl and wl_expl.get("signals"):
+                top_signal = wl_expl["signals"][0]["label"]
+            st.markdown(
+                f"<div class='ml-card-elev' style='border-left:3px solid #f59e0b;min-height:160px'>"
+                f"<div style='display:flex;justify-content:space-between;align-items:flex-start;gap:12px'>"
+                f"<div><div style='color:#f59e0b;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.08em;font-weight:600'>⚠ Needs attention</div>"
+                f"<div style='font-size:1.4rem;font-weight:600;margin-top:6px'>{weakest.subject} → {weakest.topic}</div>"
+                f"<div style='color:#9aa6c0;font-size:0.88rem;margin-top:4px'>{wl_mastery:.0%} mastery</div>"
+                f"<div style='color:#cbd5e1;font-size:0.85rem;margin-top:10px'>{_html_escape(top_signal) if top_signal else 'Practise this topic to bring mastery up.'}</div></div>"
+                f"<div style='font-size:1.6rem;font-weight:700;color:#f87171;min-width:60px;text-align:right'>{wl_mastery:.0%}</div></div>"
+                f"<div style='margin-top:14px'>",
+                unsafe_allow_html=True,
+            )
+            if st.button("Practise this topic", key="dash_practise_weak", type="primary", width="stretch"):
+                st.session_state.page = "Practice"
+                st.session_state._prefill_topic = (weakest.subject, weakest.topic)
+                st.rerun()
+            st.markdown("</div></div>", unsafe_allow_html=True)
+    with col_s:
+        # Continue Learning card: pick a fresh topic from recs or a non-mastered topic
+        continue_topic = None
+        if not p.empty:
+            target = p[p.mastery_probability < SUBJECT_MASTERY_THRESHOLD]
+            if not target.empty:
+                continue_topic = target.iloc[len(target) // 2]  # mid-difficulty pick
+            else:
+                continue_topic = p.iloc[0]
+        if continue_topic is not None:
+            cl_mastery = float(continue_topic.mastery_probability)
+            st.markdown(
+                f"<div class='ml-card-elev' style='border-left:3px solid #6366f1;min-height:160px'>"
+                f"<div style='display:flex;justify-content:space-between;align-items:flex-start;gap:12px'>"
+                f"<div><div style='color:#818cf8;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.08em;font-weight:600'>🎯 Continue learning</div>"
+                f"<div style='font-size:1.4rem;font-weight:600;margin-top:6px'>{continue_topic.subject} → {continue_topic.topic}</div>"
+                f"<div style='color:#9aa6c0;font-size:0.88rem;margin-top:4px'>{cl_mastery:.0%} mastery</div>"
+                f"<div style='color:#cbd5e1;font-size:0.85rem;margin-top:10px'>A focused session on this topic will move the needle the most.</div></div>"
+                f"<div style='font-size:1.6rem;font-weight:700;color:#a5b4fc;min-width:60px;text-align:right'>{cl_mastery:.0%}</div></div>"
+                f"<div style='margin-top:14px'>",
+                unsafe_allow_html=True,
+            )
+            if st.button("Start session", key="dash_practise_continue", type="primary", width="stretch"):
+                st.session_state.page = "Practice"
+                st.session_state._prefill_topic = (continue_topic.subject, continue_topic.topic)
+                st.rerun()
+            st.markdown("</div></div>", unsafe_allow_html=True)
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.markdown(
-        kpi("Overall mastery", f"{overall_mastery:.0%}", "From ML predictions" if not p.empty else None),
-        unsafe_allow_html=True,
-    )
-    c2.markdown(kpi("Questions attempted", f"{len(attempts):,}"), unsafe_allow_html=True)
-    c3.markdown(kpi("Current streak", f"{streak} day{'s' if streak != 1 else ''}"), unsafe_allow_html=True)
-    c4.markdown(
-        kpi("Topics mastered", f"{topics_mastered}/{total_topics}", "≥ 75% mastery", "strong"),
-        unsafe_allow_html=True,
-    )
-
-    # Subject mastery
-    section_label("Subject mastery")
-    if p.empty:
-        st.caption("Train the ML baseline to see per-subject mastery.")
+    # --- Your subjects strip --------------------------------------------------
+    section_label("Your subjects")
     subj_cols = st.columns(5)
     for col, subject in zip(subj_cols, SUBJECTS):
-        subj_attempts = attempts[attempts.subject == subject]
         if p.empty:
+            subj_attempts = attempts[attempts.subject == subject]
             mastery = float(subj_attempts.is_correct.mean()) if not subj_attempts.empty else 0.0
-            source = "Observed accuracy"
         else:
-            mastery = float(p[p.subject == subject].mastery_probability.mean())
-            source = "ML estimate"
-        trend = _mastery_trend(attempts, subject)
-        delta_text = (
-            f"{'▲' if trend >= 0 else '▼'} {abs(trend):.0%} vs earlier" if abs(trend) > 0.01 else "stable"
-        )
-        delta_kind = "up" if trend > 0.01 else "down" if trend < -0.01 else "flat"
+            mastery = float(p[p.subject == subject].mastery_probability.mean()) if (p.subject == subject).any() else 0.0
         with col:
             st.markdown(
                 f"<div class='ml-subject-card'>"
                 f"<div class='name'>{subject}</div>"
                 f"<div class='pct'>{mastery:.0%}</div>"
                 f"<div class='ml-progress'><div style='width:{mastery*100:.1f}%'></div></div>"
-                f"<div style='margin-top:8px'>{pill(delta_text, delta_kind)} {pill(source, 'flat')}</div>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
 
-    # Weakest / Strongest
-    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-    section_label("Learning intelligence")
-    if p.empty:
-        empty_state("Predictions not available", "Train the ML baseline in ML Experiments to see weakness analysis.")
-    else:
-        weakest = p.iloc[0]
-        strongest = p.iloc[-1]
-        col_w, col_s = st.columns(2)
-        explanations = latest_explanations(sid)
-        expl = explanations.get((weakest.subject, weakest.topic))
-        with col_w:
-            if expl is not None:
-                st.markdown(_render_explanation_card(expl, "Your weakest area"), unsafe_allow_html=True)
-            else:
-                    st.markdown(
-                        f"<div class='ml-card-elev'>"
-                        f"<div class='ml-section-label' style='margin-top:0'>Your weakest area</div>"
-                        f"<div style='font-size:1.15rem;font-weight:600'>{weakest.subject} → {weakest.topic}</div>"
-                        f"<div style='display:flex;align-items:center;gap:12px;margin:8px 0'>"
-                        f"<div style='font-size:1.6rem;font-weight:700'>{weakest.mastery_probability:.0%}</div>"
-                        f"{pill(weakest.status, 'weak')}</div>"
-                        f"<div style='color:#9aa6c0'>Open Recommendations to refresh the explanation.</div>"
-                        f"</div>",
-                        unsafe_allow_html=True,
-                    )
-            if st.button("Practise this topic", key="dash_practise_weak", type="primary"):
-                st.session_state.page = "Practice"
-                st.session_state._prefill_topic = (weakest.subject, weakest.topic)
-                st.rerun()
-        with col_s:
-            st.markdown(
-                f"<div class='ml-card-elev'>"
-                f"<div class='ml-section-label' style='margin-top:0'>Your strongest area</div>"
-                f"<div style='font-size:1.15rem;font-weight:600'>{strongest.subject} → {strongest.topic}</div>"
-                f"<div style='display:flex;align-items:center;gap:12px;margin:8px 0'>"
-                f"<div style='font-size:1.6rem;font-weight:700'>{strongest.mastery_probability:.0%}</div>"
-                f"{pill(strongest.status, 'strong')}</div>"
-                f"<div style='color:#9aa6c0'>Maintain with periodic revision questions.</div>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-
-    # Mastery over time
+    # --- Recent performance (line chart) -------------------------------------
     section_label("Recent performance")
     curve = learning_curve_frame(attempts) if not attempts.empty else pd.DataFrame()
     if curve.empty or curve.shape[0] < 2:
         st.caption("Mastery over time will appear after a few attempts.")
     else:
-        st.line_chart(curve, height=240, width="stretch")
+        st.line_chart(curve, height=260, width="stretch")
 
-    # Today's plan
-    section_label("Today's recommended plan")
+    # --- Today's plan ---------------------------------------------------------
+    section_label("Today's plan")
     if p.empty:
         st.caption("Generate recommendations by completing a few attempts and ensuring the ML model is trained.")
     else:

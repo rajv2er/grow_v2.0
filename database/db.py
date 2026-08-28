@@ -137,6 +137,11 @@ def initialise_database(db_path: Path = DATABASE_PATH) -> None:
                 "INSERT INTO schema_version(version, applied_at, description) VALUES (?,?,?)",
                 (5, datetime.now(timezone.utc).isoformat(), "recommendations.explanation_json column for structured explainer output"),
             )
+        if current < 6:
+            conn.execute(
+                "INSERT INTO schema_version(version, applied_at, description) VALUES (?,?,?)",
+                (6, datetime.now(timezone.utc).isoformat(), "recommendation_explanations table (per-topic snapshot for UI)"),
+            )
         rec_columns = {row[1] for row in conn.execute("PRAGMA table_info(recommendations)")}
         if "explanation_json" not in rec_columns:
             conn.execute("ALTER TABLE recommendations ADD COLUMN explanation_json TEXT")
