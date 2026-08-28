@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS recommendations (
     recommended_difficulty TEXT NOT NULL,
     reason TEXT NOT NULL,
     score REAL NOT NULL,
+    explanation_json TEXT,
     created_at TEXT NOT NULL
 );
 

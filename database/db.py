@@ -132,6 +132,14 @@ def initialise_database(db_path: Path = DATABASE_PATH) -> None:
                 "INSERT INTO schema_version(version, applied_at, description) VALUES (?,?,?)",
                 (4, datetime.now(timezone.utc).isoformat(), "expanded question_type CHECK + blanks/answers/value/tolerance columns"),
             )
+        if current < 5:
+            conn.execute(
+                "INSERT INTO schema_version(version, applied_at, description) VALUES (?,?,?)",
+                (5, datetime.now(timezone.utc).isoformat(), "recommendations.explanation_json column for structured explainer output"),
+            )
+        rec_columns = {row[1] for row in conn.execute("PRAGMA table_info(recommendations)")}
+        if "explanation_json" not in rec_columns:
+            conn.execute("ALTER TABLE recommendations ADD COLUMN explanation_json TEXT")
         # Add the new question columns and relax the CHECK for older DBs.
         question_columns_now = {row[1] for row in conn.execute("PRAGMA table_info(questions)")}
         if "blanks_json" not in question_columns_now:

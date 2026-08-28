@@ -734,6 +734,65 @@ def ensure_demo_warmup(student_id: str) -> int:
     return len(rows)
 
 
+def latest_explanations(sid: str) -> dict[tuple[str, str], dict]:
+    """Return {(subject, topic): explanation_dict} for the most recent recommender run."""
+    import json as _json
+    with connection() as conn:
+        rows = conn.execute(
+            "SELECT subject, topic, explanation_json FROM recommendations "
+            "WHERE student_id=? AND explanation_json IS NOT NULL",
+            (sid,),
+        ).fetchall()
+    out: dict[tuple[str, str], dict] = {}
+    for r in rows:
+        try:
+            out[(r["subject"], r["topic"])] = _json.loads(r["explanation_json"])
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _render_explanation_card(expl: dict, label: str) -> str:
+    """Render a structured explanation as a dashboard / recommendations card."""
+    signals = expl.get("signals", [])
+    bullets = "".join(
+        f"<li style='margin:4px 0;color:#e6ecf7'>"
+        f"<span style='color:#4ade80;margin-right:8px'>&#x2713;</span>"
+        f"{_html_escape(s['label'])}</li>"
+        for s in signals
+    )
+    confidence = float(expl.get("confidence", 0.5))
+    mastery = float(expl.get("model_mastery", 0.0))
+    ema = expl.get("ema_mastery")
+    evidence = int(expl.get("evidence_attempts", 0))
+    mastery_line = (
+        f"Model mastery <b>{mastery:.0%}</b>"
+        + (f" · EMA <b>{ema:.0%}</b>" if ema is not None else "")
+        + f" · based on <b>{evidence}</b> attempt{'s' if evidence != 1 else ''}"
+    )
+    return (
+        "<div class='ml-card-elev' style='border-left:3px solid #6366f1'>"
+        f"<div class='ml-section-label' style='margin-top:0'>{_html_escape(label)}</div>"
+        f"<div style='font-weight:600;font-size:1.05rem;margin-top:4px'>{_html_escape(expl.get('headline', ''))}</div>"
+        f"<ul style='list-style:none;padding-left:0;margin:10px 0 0 0'>{bullets}</ul>"
+        "<div style='margin-top:14px'>"
+        f"<div style='display:flex;justify-content:space-between;align-items:center;font-size:0.8rem;color:#9aa6c0'>"
+        f"<span>Recommendation confidence</span><span><b>{confidence:.0%}</b></span></div>"
+        f"<div class='ml-progress' style='margin-top:4px'><div style='width:{confidence*100:.1f}%'></div></div>"
+        f"<div style='color:#9aa6c0;font-size:0.78rem;margin-top:8px'>{mastery_line}</div>"
+        "</div></div>"
+    )
+
+
+def _html_escape(text: str) -> str:
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
 # Late import to keep the section above readable
 import json  # noqa: E402
 
@@ -948,24 +1007,23 @@ def dashboard_page(q: pd.DataFrame) -> None:
         weakest = p.iloc[0]
         strongest = p.iloc[-1]
         col_w, col_s = st.columns(2)
-        reasons = (
-            weakest.explanation.get("reasons", [])
-            if isinstance(weakest.explanation, dict)
-            else []
-        )
+        explanations = latest_explanations(sid)
+        expl = explanations.get((weakest.subject, weakest.topic))
         with col_w:
-            st.markdown(
-                f"<div class='ml-card-elev'>"
-                f"<div class='ml-section-label' style='margin-top:0'>Your weakest area</div>"
-                f"<div style='font-size:1.15rem;font-weight:600'>{weakest.subject} → {weakest.topic}</div>"
-                f"<div style='display:flex;align-items:center;gap:12px;margin:8px 0'>"
-                f"<div style='font-size:1.6rem;font-weight:700'>{weakest.mastery_probability:.0%}</div>"
-                f"{pill(weakest.status, 'weak')}</div>"
-                f"<ul style='color:#9aa6c0;margin:0;padding-left:18px'>"
-                + "".join(f"<li>{r}</li>" for r in reasons)
-                + f"</ul></div>",
-                unsafe_allow_html=True,
-            )
+            if expl is not None:
+                st.markdown(_render_explanation_card(expl, "Your weakest area"), unsafe_allow_html=True)
+            else:
+                    st.markdown(
+                        f"<div class='ml-card-elev'>"
+                        f"<div class='ml-section-label' style='margin-top:0'>Your weakest area</div>"
+                        f"<div style='font-size:1.15rem;font-weight:600'>{weakest.subject} → {weakest.topic}</div>"
+                        f"<div style='display:flex;align-items:center;gap:12px;margin:8px 0'>"
+                        f"<div style='font-size:1.6rem;font-weight:700'>{weakest.mastery_probability:.0%}</div>"
+                        f"{pill(weakest.status, 'weak')}</div>"
+                        f"<div style='color:#9aa6c0'>Open Recommendations to refresh the explanation.</div>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
             if st.button("Practise this topic", key="dash_practise_weak", type="primary"):
                 st.session_state.page = "Practice"
                 st.session_state._prefill_topic = (weakest.subject, weakest.topic)
@@ -1157,7 +1215,7 @@ def _finalize(
     }
 
 
-def _question_panel(question: pd.Series, why: str, mastery_before: float | None) -> None:
+def _question_panel(question: pd.Series, why: str, mastery_before: float | None, explanation: dict | None = None) -> None:
     mastery_pct = f"{mastery_before:.0%}" if mastery_before is not None else "—"
     type_label = {
         "MCQ": "Multiple choice",
@@ -1183,6 +1241,26 @@ def _question_panel(question: pd.Series, why: str, mastery_before: float | None)
         f"</div>",
         unsafe_allow_html=True,
     )
+    if explanation is not None and explanation.get("signals"):
+        signals = explanation["signals"][:4]
+        bullets = "".join(
+            f"<li style='margin:3px 0'>"
+            f"<span style='color:#4ade80;margin-right:6px'>&#x2713;</span>"
+            f"{_html_escape(s['label'])}</li>"
+            for s in signals
+        )
+        confidence = float(explanation.get("confidence", 0.5))
+        mastery = float(explanation.get("model_mastery", mastery_before or 0.0))
+        st.markdown(
+            f"<div class='ml-card' style='border-left:3px solid #6366f1;margin-top:10px'>"
+            f"<div style='font-weight:600;font-size:0.95rem'>Why we recommend {question.topic}</div>"
+            f"<ul style='list-style:none;padding-left:0;margin:8px 0 0 0;font-size:0.88rem'>{bullets}</ul>"
+            f"<div style='margin-top:10px;display:flex;justify-content:space-between;align-items:center;color:#9aa6c0;font-size:0.78rem'>"
+            f"<span>Model mastery <b style='color:#e6ecf7'>{mastery:.0%}</b></span>"
+            f"<span>Recommendation confidence <b style='color:#e6ecf7'>{confidence:.0%}</b></span></div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
     st.markdown(
         f"<div class='ml-card' style='margin-top:10px'><div style='font-size:1.05rem'>{question.question}</div></div>",
         unsafe_allow_html=True,
@@ -1436,7 +1514,9 @@ def practice_page(q: pd.DataFrame) -> None:
     question = q[q.question_id == st.session_state.active_question].iloc[0]
     limit = SUBJECTIVE_TIME_LIMIT if question.question_type == "Subjective" else TIME_LIMITS[question.difficulty]
     _timer_fragment(limit)
-    _question_panel(question, st.session_state.why, st.session_state.get("mastery_before"))
+    explanations = latest_explanations(sid)
+    expl = explanations.get((question.subject, question.topic))
+    _question_panel(question, st.session_state.why, st.session_state.get("mastery_before"), expl)
     answer = _answer_block(question, key=f"a_{question.question_id}")
     confidence = st.select_slider(
         "How confident are you?",
@@ -1565,6 +1645,7 @@ def recommendations_page(q: pd.DataFrame) -> None:
         if not items:
             continue
         section_label(label)
+        explanations = latest_explanations(sid)
         for r in items:
             st.markdown(
                 f"<div class='ml-card'>"
@@ -1575,6 +1656,24 @@ def recommendations_page(q: pd.DataFrame) -> None:
                 f"{pill(r.status, kind)}</div></div>",
                 unsafe_allow_html=True,
             )
+            expl = explanations.get((r.subject, r.topic))
+            if expl is not None:
+                top_signals = expl.get("signals", [])[:3]
+                bullets = "".join(
+                    f"<li style='margin:3px 0'><span style='color:#4ade80;margin-right:6px'>&#x2713;</span>"
+                    f"{_html_escape(s['label'])}</li>"
+                    for s in top_signals
+                )
+                confidence = float(expl.get("confidence", 0.5))
+                st.markdown(
+                    f"<div class='ml-card' style='border-left:3px solid #6366f1;padding:12px 14px'>"
+                    f"<div style='font-size:0.78rem;color:#9aa6c0;text-transform:uppercase;letter-spacing:0.08em'>Why?</div>"
+                    f"<ul style='list-style:none;padding-left:0;margin:6px 0 0 0;font-size:0.88rem'>{bullets}</ul>"
+                    f"<div style='color:#9aa6c0;font-size:0.78rem;margin-top:8px'>"
+                    f"Recommendation confidence <b>{confidence:.0%}</b> · {expl.get('evidence_attempts', 0)} attempt(s)</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
             doc_key = (r.subject, r.topic)
             show_doc = st.session_state.get("_doc_topic") == doc_key
             if show_doc:

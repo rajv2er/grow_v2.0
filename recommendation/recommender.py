@@ -1,12 +1,15 @@
 """Novelty-aware recommendations derived from mastery predictions."""
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 import pandas as pd
 
 from config import DATABASE_PATH
 from database.db import connection
+from ml.online_mastery import read_mastery
+from ml.recommendation_explainer import build_explanation
 from observability import log, timed
 from recommendation.adaptive_difficulty import TARGET_BAND, target_difficulty_rating
 
@@ -24,6 +27,11 @@ def recommend_questions(
     student_attempts = attempts[attempts.student_id == student_id]
     seen_ids = set(student_attempts.question_id)
     skip = exclude or set()
+    ema_rows = read_mastery(student_id, db_path=db_path)
+    ema_by_topic = {
+        (r.subject, r.topic): float(r.mastery_estimate)
+        for r in ema_rows.itertuples(index=False)
+    } if not ema_rows.empty else {}
     records = []
     for prediction in predictions.itertuples(index=False):
         topic_history = student_attempts[(student_attempts.subject == prediction.subject) & (student_attempts.topic == prediction.topic)]
@@ -43,6 +51,14 @@ def recommend_questions(
         q = candidates.iloc[0]
         novelty_bonus = 0.15 if not bool(q.seen) else 0.0
         score = (1.0 - mastery) + novelty_bonus - 0.5 * float(q.rating_distance) + (0.10 if bool(q.in_band) else 0.0)
+        ema_estimate = ema_by_topic.get((prediction.subject, prediction.topic))
+        explanation = build_explanation(
+            subject=prediction.subject,
+            topic=prediction.topic,
+            mastery_probability=mastery,
+            topic_history=topic_history,
+            ema_estimate=ema_estimate,
+        )
         records.append({
             "student_id": student_id, "question_id": q.question_id, "subject": q.subject,
             "topic": q.topic, "recommended_difficulty": q.difficulty,
@@ -55,6 +71,8 @@ def recommend_questions(
                 f"{', ' + str(q.question_type) if q.get('question_type') == 'Subjective' else ''}); "
                 f"{'new question' if not q.seen else 'spaced revision'}."
             ),
+            "explanation_json": json.dumps(explanation),
+            "confidence": float(explanation["confidence"]),
         })
     result = pd.DataFrame(records).sort_values("score", ascending=False).drop_duplicates("question_id").head(limit).reset_index(drop=True)
     log.info("recommend student=%s limit=%d n_predictions=%d n_attempts=%d", student_id, limit, len(predictions), len(student_attempts))
@@ -65,8 +83,9 @@ def recommend_questions(
                 conn.execute("DELETE FROM recommendations WHERE student_id=?", (student_id,))
                 conn.executemany(
                     """INSERT INTO recommendations(student_id, question_id, subject, topic,
-                       recommended_difficulty, reason, score, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    [(r.student_id, r.question_id, r.subject, r.topic, r.recommended_difficulty, r.reason, r.score, datetime.now(timezone.utc).isoformat()) for r in result.itertuples(index=False)],
+                       recommended_difficulty, reason, score, explanation_json, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    [(r.student_id, r.question_id, r.subject, r.topic, r.recommended_difficulty, r.reason, r.score, r.explanation_json, datetime.now(timezone.utc).isoformat()) for r in result.itertuples(index=False)],
                 )
         log.info("recommend done student=%s n_returned=%d", student_id, len(result))
     return result
