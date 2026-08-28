@@ -109,8 +109,128 @@ def build_question_bank() -> list[dict]:
                 "correct_answer": None, "model_answer": fact.capitalize() + ".",
                 "explanation": f"Model answer: {fact.capitalize()}.",
             })
-    assert len(questions) == 200, "Every topic must provide Easy, Medium, Hard MCQs plus one subjective item."
+    # 40 new questions across 4 new types: TrueFalse, MultipleSelect,
+    # FillInBlank, Numerical. 10 per type, distributed across the existing
+    # topics so each topic has a new-style question to surface.
+    questions.extend(_build_extended_types(TOPIC_FACTS))
+    assert len(questions) == 240, f"Expected 200 base + 40 extended = 240, got {len(questions)}."
     return questions
+
+
+def _build_extended_types(facts: dict) -> list[dict]:
+    """Author 10 questions per new type: TrueFalse, MultipleSelect, FillInBlank, Numerical."""
+    out: list[dict] = []
+    flat = [(s, t, fact, base)
+            for s, items in facts.items() for (t, fact, _dist, base) in items]
+    # Take 10 distinct (subject, topic) entries spanning all subjects.
+    chosen = []
+    for subj in ("DSA", "DBMS", "Operating Systems", "Computer Networks", "Software Engineering"):
+        for s, t, fact, base in flat:
+            if s == subj and (s, t) not in chosen:
+                chosen.append((s, t, fact, base))
+                break
+        if len(chosen) >= 10:
+            break
+    if len(chosen) < 10:
+        for s, t, fact, base in flat:
+            if (s, t) not in chosen:
+                chosen.append((s, t, fact, base))
+            if len(chosen) >= 10:
+                break
+    chosen = chosen[:10]
+    rating = {"Easy": 0.25, "Medium": 0.55, "Hard": 0.85}
+
+    # 10 True/False: a single True statement of the topic fact.
+    for i, (subj, topic, fact, base) in enumerate(chosen, start=1):
+        out.append({
+            "question_id": f"QTF{i:02d}", "subject": subj, "topic": topic,
+            "question": f"True or False: {fact[0].upper() + fact[1:]}.",
+            "question_type": "TrueFalse", "difficulty": base,
+            "difficulty_rating": rating[base],
+            "option_a": "True", "option_b": "False", "option_c": None, "option_d": None,
+            "correct_answer": "A", "model_answer": None,
+            "explanation": f"Correct. {fact.capitalize()}.",
+        })
+
+    # 10 Multiple-select: pick 2-3 correct from 4 statements. correct_answers_json
+    # stores the sorted list of correct option letters.
+    multi_data = [
+        ("DSA", "Arrays", ["elements are stored at contiguous addresses", "lookup by index is O(n)", "size can change dynamically", "memory is allocated as a single block"], ["A", "D"]),
+        ("DSA", "Linked Lists", ["each node holds data and a link", "nodes are at arbitrary addresses", "indexing is O(1)", "deletion at head is O(1)"], ["A", "B", "D"]),
+        ("DBMS", "SQL", ["SELECT reads rows", "UPDATE modifies rows", "DROP creates a backup", "INSERT adds new rows"], ["A", "B", "D"]),
+        ("DBMS", "Transactions", ["atomicity is part of ACID", "consistency is optional", "durability persists committed data", "isolation controls concurrent views"], ["A", "C", "D"]),
+        ("Operating Systems", "Processes", ["a process has its own address space", "threads of one process share memory", "two processes always share all state", "a process has a PCB"], ["A", "B", "D"]),
+        ("Operating Systems", "Deadlocks", ["circular wait is one of four conditions", "mutual exclusion is required", "preemption always prevents deadlock", "hold-and-wait is one condition"], ["A", "B", "D"]),
+        ("Computer Networks", "TCP", ["TCP is connection-oriented", "TCP guarantees ordered delivery", "TCP is unreliable", "TCP uses a three-way handshake"], ["A", "B", "D"]),
+        ("Computer Networks", "UDP", ["UDP is connectionless", "UDP has low overhead", "UDP guarantees in-order delivery", "UDP is best for streaming"], ["A", "B", "D"]),
+        ("Software Engineering", "Testing", ["unit tests target small components", "integration tests cover modules together", "a test plan is a build script", "regression tests catch new breakage"], ["A", "B", "D"]),
+        ("Software Engineering", "Agile", ["iterative delivery", "frequent customer feedback", "no planning phase at all", "small cross-functional teams"], ["A", "B", "D"]),
+    ]
+    for i, (subj, topic, options, correct) in enumerate(multi_data, start=1):
+        out.append({
+            "question_id": f"QMS{i:02d}", "subject": subj, "topic": topic,
+            "question": f"Select ALL statements that are true about {topic}.",
+            "question_type": "MultipleSelect", "difficulty": "Medium",
+            "difficulty_rating": rating["Medium"],
+            "option_a": options[0], "option_b": options[1], "option_c": options[2], "option_d": options[3],
+            "correct_answer": None, "model_answer": None,
+            "explanation": f"Correct answers: {', '.join(correct)}. " + " ".join(options[ord(c) - ord('A')] for c in correct) + ".",
+            "correct_answers_json": json.dumps(correct),
+        })
+
+    # 10 Fill-in-the-blank: a sentence with a single blank. blanks_json stores
+    # a list of accepted answers (lowercase). The fact provides the answer.
+    fib_data = [
+        ("DSA", "Recursion", "Every recursive function must have a ___ case to terminate.", "base"),
+        ("DSA", "Trees", "In a binary search tree, the left subtree contains keys ___ than the root.", "smaller"),
+        ("DBMS", "Normalization", "The goal of normalization is to reduce data ___ and update anomalies.", "redundancy"),
+        ("DBMS", "Indexing", "A database ___ speeds up lookups on a column but can slow writes.", "index"),
+        ("Operating Systems", "Paging", "Paging divides virtual memory into fixed-size ___.", "pages"),
+        ("Operating Systems", "Threads", "Threads of the same process share the same address ___.", "space"),
+        ("Computer Networks", "OSI", "The ___ layer of the OSI model provides end-to-end transport services.", "transport"),
+        ("Computer Networks", "DNS", "DNS translates human-readable domain names into IP ___.", "addresses"),
+        ("Software Engineering", "SDLC", "The ___ describes the phases used to develop and maintain software.", "sdlc"),
+        ("Software Engineering", "UML", "A UML ___ diagram models classes and their relationships.", "class"),
+    ]
+    for i, (subj, topic, prompt, answer) in enumerate(fib_data, start=1):
+        out.append({
+            "question_id": f"QFB{i:02d}", "subject": subj, "topic": topic,
+            "question": prompt,
+            "question_type": "FillInBlank", "difficulty": "Easy",
+            "difficulty_rating": rating["Easy"],
+            "option_a": None, "option_b": None, "option_c": None, "option_d": None,
+            "correct_answer": None, "model_answer": None,
+            "explanation": f"The missing word is '{answer}'.",
+            "blanks_json": json.dumps([answer, answer.capitalize()]),
+        })
+
+    # 10 Numerical: a small computation with a tolerance. expected_value is
+    # the canonical answer; tolerance is the allowed relative error.
+    num_data = [
+        ("DSA", "Arrays", "An array of 8 bytes per element starts at address 1000. What is the address of the 4th element (0-indexed)?", 1024, 0.0),
+        ("DSA", "Hashing", "A hash table of size 10 stores key 47 with hash h(k)=k mod 10. What is its index?", 7, 0.0),
+        ("Operating Systems", "CPU Scheduling", "Round-robin with quantum 4 ms, 3 processes of 10 ms each. What is the average waiting time (ms)?", 12, 0.05),
+        ("Operating Systems", "Paging", "A page table has 8 entries; each page is 4 KB. What is the total virtual memory in KB?", 32, 0.0),
+        ("DBMS", "Normalization", "A relation is in 1NF, 2NF, and 3NF. How many normal forms does it satisfy (count)?", 3, 0.0),
+        ("DBMS", "Indexing", "A B+ tree of order 4 holds 64 keys. What is the minimum tree height (count of levels from root to leaf)?", 3, 0.0),
+        ("Computer Networks", "IP Addressing", "An IPv4 address has how many bits in total?", 32, 0.0),
+        ("Computer Networks", "OSI", "How many layers are in the OSI model?", 7, 0.0),
+        ("Software Engineering", "Testing", "You write 50 unit tests; 46 pass. What percentage passed (whole number)?", 92, 0.0),
+        ("Software Engineering", "SDLC", "How many phases are in the classic Waterfall model (counting requirements through maintenance)?", 6, 0.05),
+    ]
+    for i, (subj, topic, prompt, expected, tolerance) in enumerate(num_data, start=1):
+        out.append({
+            "question_id": f"QNU{i:02d}", "subject": subj, "topic": topic,
+            "question": prompt,
+            "question_type": "Numerical", "difficulty": "Medium",
+            "difficulty_rating": rating["Medium"],
+            "option_a": None, "option_b": None, "option_c": None, "option_d": None,
+            "correct_answer": None, "model_answer": None,
+            "explanation": f"Expected answer: {expected} (relative tolerance {tolerance:.0%}).",
+            "expected_value": float(expected),
+            "tolerance": float(tolerance),
+        })
+    return out
 
 
 def _rating(base: float, subject_index: int, topic_index: int, variant_index: int, step: float = 0.10) -> float:

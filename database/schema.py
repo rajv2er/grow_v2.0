@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS questions (
     subject TEXT NOT NULL,
     topic TEXT NOT NULL,
     question TEXT NOT NULL,
-    question_type TEXT NOT NULL DEFAULT 'MCQ' CHECK(question_type IN ('MCQ', 'Subjective')),
+    question_type TEXT NOT NULL DEFAULT 'MCQ' CHECK(question_type IN ('MCQ', 'Subjective', 'TrueFalse', 'MultipleSelect', 'FillInBlank', 'Numerical')),
     difficulty TEXT NOT NULL CHECK(difficulty IN ('Easy', 'Medium', 'Hard')),
     difficulty_rating REAL NOT NULL CHECK(difficulty_rating BETWEEN 0.1 AND 1.0),
     option_a TEXT,
@@ -39,7 +39,11 @@ CREATE TABLE IF NOT EXISTS questions (
     option_d TEXT,
     correct_answer TEXT,
     model_answer TEXT,
-    explanation TEXT NOT NULL
+    explanation TEXT NOT NULL,
+    blanks_json TEXT,
+    correct_answers_json TEXT,
+    expected_value REAL,
+    tolerance REAL DEFAULT 0.01
 );
 
 CREATE TABLE IF NOT EXISTS attempts (

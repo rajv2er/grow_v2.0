@@ -50,6 +50,43 @@ def _rebuild_questions_table(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys = ON")
 
 
+def _relax_questions_check(conn: sqlite3.Connection) -> None:
+    """Rebuild the questions table with the expanded question_type CHECK and
+    extra columns (blanks_json, correct_answers_json, expected_value, tolerance).
+    Preserves all existing rows. Idempotent: drops any leftover questions_new
+    from a prior failed attempt.
+    """
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute("DROP TABLE IF EXISTS questions_new")
+    conn.executescript("""
+        CREATE TABLE questions_new (
+            question_id TEXT PRIMARY KEY,
+            subject TEXT NOT NULL,
+            topic TEXT NOT NULL,
+            question TEXT NOT NULL,
+            question_type TEXT NOT NULL DEFAULT 'MCQ'
+                CHECK(question_type IN ('MCQ','Subjective','TrueFalse','MultipleSelect','FillInBlank','Numerical')),
+            difficulty TEXT NOT NULL CHECK(difficulty IN ('Easy','Medium','Hard')),
+            difficulty_rating REAL NOT NULL CHECK(difficulty_rating BETWEEN 0.1 AND 1.0),
+            option_a TEXT, option_b TEXT, option_c TEXT, option_d TEXT,
+            correct_answer TEXT, model_answer TEXT, explanation TEXT NOT NULL,
+            blanks_json TEXT, correct_answers_json TEXT,
+            expected_value REAL, tolerance REAL DEFAULT 0.01
+        );
+        INSERT INTO questions_new
+            (question_id, subject, topic, question, question_type, difficulty, difficulty_rating,
+             option_a, option_b, option_c, option_d, correct_answer, model_answer, explanation,
+             blanks_json, correct_answers_json, expected_value, tolerance)
+        SELECT question_id, subject, topic, question, question_type, difficulty, difficulty_rating,
+               option_a, option_b, option_c, option_d, correct_answer, model_answer, explanation,
+               blanks_json, correct_answers_json, expected_value, tolerance
+        FROM questions;
+        DROP TABLE questions;
+        ALTER TABLE questions_new RENAME TO questions;
+    """)
+    conn.execute("PRAGMA foreign_keys = ON")
+
+
 def initialise_database(db_path: Path = DATABASE_PATH) -> None:
     with connection(db_path) as conn:
         conn.executescript(SCHEMA)
@@ -90,12 +127,44 @@ def initialise_database(db_path: Path = DATABASE_PATH) -> None:
                 "INSERT INTO schema_version(version, applied_at, description) VALUES (?,?,?)",
                 (3, datetime.now(timezone.utc).isoformat(), "attempt_feedback table for 👍/👎"),
             )
+        if current < 4:
+            conn.execute(
+                "INSERT INTO schema_version(version, applied_at, description) VALUES (?,?,?)",
+                (4, datetime.now(timezone.utc).isoformat(), "expanded question_type CHECK + blanks/answers/value/tolerance columns"),
+            )
+        # Add the new question columns and relax the CHECK for older DBs.
+        question_columns_now = {row[1] for row in conn.execute("PRAGMA table_info(questions)")}
+        if "blanks_json" not in question_columns_now:
+            conn.execute("ALTER TABLE questions ADD COLUMN blanks_json TEXT")
+        if "correct_answers_json" not in question_columns_now:
+            conn.execute("ALTER TABLE questions ADD COLUMN correct_answers_json TEXT")
+        if "expected_value" not in question_columns_now:
+            conn.execute("ALTER TABLE questions ADD COLUMN expected_value REAL")
+        if "tolerance" not in question_columns_now:
+            conn.execute("ALTER TABLE questions ADD COLUMN tolerance REAL DEFAULT 0.01")
+        # Old DBs have the strict MCQ/Subjective CHECK. Rebuild the table
+        # to relax it so the new types can be inserted.
+        for row in conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='questions'"
+        ):
+            sql = row[0] or ""
+            if "TrueFalse" not in sql:
+                _relax_questions_check(conn)
 
 
 def seed_question_bank(questions: Iterable[dict], db_path: Path = DATABASE_PATH) -> None:
     """Upsert modular question records and their subject/topic lookup records."""
     initialise_database(db_path)
-    rows = list(questions)
+    rows = []
+    for q in questions:
+        row = dict(q)
+        # New question-type columns: default to None / 0.01 so older MCQ-only
+        # records still bind cleanly after the schema migration.
+        row.setdefault("blanks_json", None)
+        row.setdefault("correct_answers_json", None)
+        row.setdefault("expected_value", None)
+        row.setdefault("tolerance", 0.01)
+        rows.append(row)
     with connection(db_path) as conn:
         conn.executemany("INSERT OR IGNORE INTO subjects(name) VALUES (?)", [(q["subject"],) for q in rows])
         conn.executemany(
@@ -105,10 +174,12 @@ def seed_question_bank(questions: Iterable[dict], db_path: Path = DATABASE_PATH)
         conn.executemany(
             """INSERT OR REPLACE INTO questions
                (question_id, subject, topic, question, question_type, difficulty, difficulty_rating,
-                option_a, option_b, option_c, option_d, correct_answer, model_answer, explanation)
+                option_a, option_b, option_c, option_d, correct_answer, model_answer, explanation,
+                blanks_json, correct_answers_json, expected_value, tolerance)
                VALUES (:question_id, :subject, :topic, :question, :question_type, :difficulty,
                 :difficulty_rating, :option_a, :option_b, :option_c, :option_d, :correct_answer,
-                :model_answer, :explanation)""",
+                :model_answer, :explanation, :blanks_json, :correct_answers_json, :expected_value,
+                :tolerance)""",
             rows,
         )
 

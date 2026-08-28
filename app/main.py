@@ -47,6 +47,7 @@ from ml.online_mastery import (
     overlay_predictions as _overlay_mastery,
     update_after_attempt as _update_ema,
 )
+from ml.question_graders import grade_any as _grade_new_type
 from ml.subjective_grading import grade_subjective
 from recommendation.recommender import recommend_questions
 from simulator.learning_simulator import run_simulation
@@ -1105,6 +1106,11 @@ def _finalize(
         correct = bool(graded["is_correct"])
         score = graded["score"]
         feedback = graded["feedback"]
+    elif question.question_type in ("TrueFalse", "MultipleSelect", "FillInBlank", "Numerical"):
+        graded = _grade_new_type(question.to_dict(), answer)
+        correct = bool(graded["is_correct"])
+        score = graded["score"]
+        feedback = graded["feedback"]
     else:
         correct = bool(answer == question.correct_answer)
         score = None
@@ -1115,7 +1121,9 @@ def _finalize(
         correct,
         elapsed,
         confidence,
-        answer_text=(answer if question.question_type == "Subjective" else None),
+        answer_text=(
+            answer if question.question_type in ("Subjective", "FillInBlank", "Numerical") else None
+        ),
         score=score,
     )
     after = _topic_mastery(
@@ -1151,6 +1159,14 @@ def _finalize(
 
 def _question_panel(question: pd.Series, why: str, mastery_before: float | None) -> None:
     mastery_pct = f"{mastery_before:.0%}" if mastery_before is not None else "—"
+    type_label = {
+        "MCQ": "Multiple choice",
+        "Subjective": "Written answer",
+        "TrueFalse": "True / False",
+        "MultipleSelect": "Multiple select",
+        "FillInBlank": "Fill in the blank",
+        "Numerical": "Numerical",
+    }.get(question.question_type, question.question_type)
     section_label("Personalised practice")
     st.markdown(
         f"<div class='ml-card-elev'>"
@@ -1159,6 +1175,8 @@ def _question_panel(question: pd.Series, why: str, mastery_before: float | None)
         f"<div style='font-weight:600'>{question.subject} → {question.topic}</div></div>"
         f"<div><div style='color:#9aa6c0;font-size:0.85rem'>Difficulty</div>"
         f"<div style='font-weight:600'>{question.difficulty} · rating {question.difficulty_rating:.2f}</div></div>"
+        f"<div><div style='color:#9aa6c0;font-size:0.85rem'>Type</div>"
+        f"<div style='font-weight:600'>{type_label}</div></div>"
         f"<div><div style='color:#9aa6c0;font-size:0.85rem'>Current mastery</div>"
         f"<div style='font-weight:600'>{mastery_pct}</div></div></div>"
         f"<div style='color:#9aa6c0;margin-top:10px;font-size:0.88rem'><b>Why this question?</b> {why}</div>"
@@ -1174,6 +1192,29 @@ def _question_panel(question: pd.Series, why: str, mastery_before: float | None)
 def _answer_block(question: pd.Series, key: str):
     if question.question_type == "Subjective":
         return st.text_area("Your answer", height=180, key=key, placeholder="Type your reasoning here…")
+    if question.question_type == "TrueFalse":
+        return st.radio(
+            "True or False",
+            ["A", "B"],
+            key=key,
+            format_func=lambda k: ("A. True" if k == "A" else "B. False"),
+        )
+    if question.question_type == "MultipleSelect":
+        labels = ["A", "B", "C", "D"]
+        opts = {
+            "A": question.option_a, "B": question.option_b,
+            "C": question.option_c, "D": question.option_d,
+        }
+        return st.multiselect(
+            "Select ALL that apply",
+            options=labels,
+            key=key,
+            format_func=lambda k: f"{k}. {opts[k]}",
+        )
+    if question.question_type == "FillInBlank":
+        return st.text_input("Fill in the blank", key=key, placeholder="Type the missing word…")
+    if question.question_type == "Numerical":
+        return st.text_input("Your answer (number)", key=key, placeholder="e.g. 32")
     choices = {
         "A": question.option_a,
         "B": question.option_b,
@@ -1637,7 +1678,7 @@ def question_bank_page(q: pd.DataFrame) -> None:
     f1, f2, f3 = st.columns(3)
     subject = f1.selectbox("Subject", ["All", *SUBJECTS], key="qb_subject")
     difficulty = f2.selectbox("Difficulty", ["All", "Easy", "Medium", "Hard"], key="qb_diff")
-    qtype = f3.selectbox("Type", ["All", "MCQ", "Subjective"], key="qb_type")
+    qtype = f3.selectbox("Type", ["All", "MCQ", "Subjective", "TrueFalse", "MultipleSelect", "FillInBlank", "Numerical"], key="qb_type")
     filtered = q.copy()
     if subject != "All":
         filtered = filtered[filtered.subject == subject]

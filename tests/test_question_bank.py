@@ -5,8 +5,9 @@ def test_question_bank_has_three_difficulties_plus_subjective_for_every_topic():
     questions = build_question_bank()
     mcqs = [q for q in questions if q["question_type"] == "MCQ"]
     subjective = [q for q in questions if q["question_type"] == "Subjective"]
-    assert len(questions) == 200
+    assert len(questions) == 240, f"Expected 240 (200 base + 40 extended), got {len(questions)}"
     assert len(mcqs) == 150 and len(subjective) == 50
+    assert len({q["question_type"] for q in questions}) == 6
     assert len({q["subject"] for q in questions}) == 5
     assert {q["difficulty"] for q in questions} == {"Easy", "Medium", "Hard"}
     assert all(q["correct_answer"] in {"A", "B", "C", "D"} for q in mcqs)
@@ -16,6 +17,11 @@ def test_question_bank_has_three_difficulties_plus_subjective_for_every_topic():
     assert all(levels == {"Easy", "Medium", "Hard"} for levels in by_topic.values())
     for difficulty in ("Easy", "Medium", "Hard"):
         assert len({q["correct_answer"] for q in mcqs if q["difficulty"] == difficulty}) == 4
+    extended_types = {"TrueFalse", "MultipleSelect", "FillInBlank", "Numerical"}
+    extended = [q for q in questions if q["question_type"] in extended_types]
+    assert len(extended) == 40
+    for t in extended_types:
+        assert sum(1 for q in extended if q["question_type"] == t) == 10
 
 
 def test_every_question_carries_a_numeric_rating_in_range():
