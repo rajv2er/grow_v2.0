@@ -6,9 +6,11 @@ import json
 from analytics.reports import dataset_statistics, learning_curve, performance_by_subject_topic
 from config import PROCESSED_DIR, RESULTS_DIR, SimulationConfig
 from database.db import write_dataframe
+from experiments.tracking import record as record_run
 from ml.evaluate import evaluate_models, feature_importance
 from ml.feature_engineering import build_feature_dataset
 from ml.train import train_model_suite
+from observability import log
 from simulator.learning_simulator import run_simulation
 
 
@@ -37,6 +39,16 @@ def run_experiment_from_data(
     learning_curve(attempts, RESULTS_DIR / "learning_curve.png")
     report = {"simulation": simulation_manifest, "dataset_statistics": dataset_statistics(attempts), "best_model_by_validation_f1": best, "metrics_file": str(RESULTS_DIR / "model_comparison.csv")}
     (RESULTS_DIR / "experiment_1_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    try:
+        record_run(
+            simulation_manifest=simulation_manifest,
+            dataset_statistics=dataset_statistics(attempts),
+            best_model=best,
+            model_comparison=comparison,
+            feature_names=list(features.columns),
+        )
+    except Exception as exc:  # tracking failure must not break the experiment
+        log.warning("experiment tracking failed: %s", exc)
     return features, comparison, best
 
 

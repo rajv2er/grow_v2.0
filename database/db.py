@@ -71,6 +71,25 @@ def initialise_database(db_path: Path = DATABASE_PATH) -> None:
             _rebuild_questions_table(conn)
         if "difficulty_rating" not in {row[1] for row in conn.execute("PRAGMA table_info(questions)")}:
             conn.execute("ALTER TABLE questions ADD COLUMN difficulty_rating REAL NOT NULL DEFAULT 0.55")
+        # Schema version bookkeeping. Every record the new table sees has
+        # a description; the test suite can inspect this to know which
+        # migration set is active.
+        current = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] or 0
+        if current < 1:
+            conn.execute(
+                "INSERT INTO schema_version(version, applied_at, description) VALUES (?,?,?)",
+                (1, datetime.now(timezone.utc).isoformat(), "initial schema + early migrations"),
+            )
+        if current < 2:
+            conn.execute(
+                "INSERT INTO schema_version(version, applied_at, description) VALUES (?,?,?)",
+                (2, datetime.now(timezone.utc).isoformat(), "student_topic_mastery + schema_version table"),
+            )
+        if current < 3:
+            conn.execute(
+                "INSERT INTO schema_version(version, applied_at, description) VALUES (?,?,?)",
+                (3, datetime.now(timezone.utc).isoformat(), "attempt_feedback table for 👍/👎"),
+            )
 
 
 def seed_question_bank(questions: Iterable[dict], db_path: Path = DATABASE_PATH) -> None:
@@ -159,6 +178,40 @@ def complete_queue_item(student_id: str, question_id: str, db_path: Path = DATAB
             "UPDATE practice_queue SET status='completed' WHERE student_id=? AND question_id=? AND status='pending'",
             (student_id, question_id),
         )
+
+
+def record_feedback(
+    attempt_id: int, student_id: str, useful: bool, db_path: Path = DATABASE_PATH
+) -> int:
+    """Record 👍/👎 feedback for a specific attempt. Idempotent per attempt."""
+    with connection(db_path) as conn:
+        existing = conn.execute(
+            "SELECT feedback_id FROM attempt_feedback WHERE attempt_id=?", (attempt_id,)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE attempt_feedback SET useful=? WHERE attempt_id=?",
+                (1 if useful else 0, attempt_id),
+            )
+            return int(existing["feedback_id"])
+        cur = conn.execute(
+            "INSERT INTO attempt_feedback(attempt_id, student_id, useful, created_at) VALUES (?,?,?,?)",
+            (attempt_id, student_id, 1 if useful else 0, datetime.now(timezone.utc).isoformat()),
+        )
+        return int(cur.lastrowid)
+
+
+def feedback_summary(student_id: str, db_path: Path = DATABASE_PATH) -> dict:
+    with connection(db_path) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS total, SUM(useful) AS useful FROM attempt_feedback WHERE student_id=?",
+            (student_id,),
+        ).fetchone()
+    return {
+        "total_feedback": int(row["total"] or 0),
+        "useful": int(row["useful"] or 0),
+        "rate": (float(row["useful"]) / float(row["total"])) if row["total"] else None,
+    }
 
 
 def write_dataframe(frame: pd.DataFrame, path: Path) -> Path:

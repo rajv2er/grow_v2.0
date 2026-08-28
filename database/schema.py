@@ -107,4 +107,35 @@ CREATE TABLE IF NOT EXISTS practice_queue (
 );
 
 CREATE INDEX IF NOT EXISTS idx_queue_student_due ON practice_queue(student_id, status, due_at);
+
+CREATE TABLE IF NOT EXISTS student_topic_mastery (
+    student_id TEXT NOT NULL REFERENCES students(student_id),
+    subject TEXT NOT NULL,
+    topic TEXT NOT NULL,
+    mastery_estimate REAL NOT NULL,
+    n_attempts INTEGER NOT NULL DEFAULT 0,
+    n_correct INTEGER NOT NULL DEFAULT 0,
+    ema_alpha REAL NOT NULL DEFAULT 0.4,
+    prior_mastery REAL,
+    last_updated TEXT NOT NULL,
+    PRIMARY KEY (student_id, subject, topic)
+);
+
+CREATE INDEX IF NOT EXISTS idx_stm_student ON student_topic_mastery(student_id);
+
+CREATE TABLE IF NOT EXISTS schema_version (
+    version INTEGER PRIMARY KEY,
+    applied_at TEXT NOT NULL,
+    description TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS attempt_feedback (
+    feedback_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    attempt_id INTEGER NOT NULL REFERENCES attempts(attempt_id),
+    student_id TEXT NOT NULL REFERENCES students(student_id),
+    useful INTEGER NOT NULL CHECK(useful IN (0, 1)),
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_student ON attempt_feedback(student_id);
 """

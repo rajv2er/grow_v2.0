@@ -42,6 +42,11 @@ from database.db import (
 )
 from experiments.experiment_1 import run_experiment_from_data
 from ml.predict import predict_student_mastery
+from ml.online_mastery import (
+    MIN_ATTEMPTS_FOR_OVERLAY as _EMA_MIN_ATTEMPTS,
+    overlay_predictions as _overlay_mastery,
+    update_after_attempt as _update_ema,
+)
 from ml.subjective_grading import grade_subjective
 from recommendation.recommender import recommend_questions
 from simulator.learning_simulator import run_simulation
@@ -283,6 +288,27 @@ def log_in(sid: str, password: str) -> bool:
         return False
     st.session_state.user_id = sid
     st.session_state.user_name = row["display_name"]
+    st.session_state.login_at = datetime.now(timezone.utc).isoformat()
+    return True
+
+
+def session_valid(ttl_hours: int = 24) -> bool:
+    """True if the current session is still within the TTL window."""
+    if not st.session_state.get("user_id"):
+        return False
+    login_at = st.session_state.get("login_at")
+    if not login_at:
+        return True
+    try:
+        stamp = datetime.fromisoformat(login_at.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    age = datetime.now(timezone.utc) - stamp
+    if age > timedelta(hours=ttl_hours):
+        st.session_state.pop("user_id", None)
+        st.session_state.pop("user_name", None)
+        st.session_state.pop("login_at", None)
+        return False
     return True
 
 
@@ -358,7 +384,8 @@ def predictions_for(student_id: str, attempts: pd.DataFrame, q: pd.DataFrame) ->
     m = model_path()
     if m is None or attempts.empty:
         return pd.DataFrame()
-    return predict_student_mastery(m, attempts, q, student_id)
+    global_pred = predict_student_mastery(m, attempts, q, student_id)
+    return _overlay_mastery(global_pred, student_id)
 
 
 # ---------------------------------------------------------------------------
@@ -485,10 +512,10 @@ def save_answer(
     confidence: int,
     answer_text: str | None = None,
     score: float | None = None,
-) -> None:
+) -> int:
     with connection() as conn:
         n = conn.execute("SELECT COUNT(*) FROM attempts WHERE student_id=?", (sid,)).fetchone()[0] + 1
-        conn.execute(
+        cur = conn.execute(
             "INSERT INTO attempts(student_id, question_id, subject, topic, difficulty, is_correct, "
             "time_taken_seconds, attempt_number, timestamp, session_id, confidence_rating, is_synthetic, "
             "answer_text, score) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -509,6 +536,7 @@ def save_answer(
                 score,
             ),
         )
+        attempt_id = int(cur.lastrowid)
     complete_queue_item(sid, question.question_id)
     if not correct:
         review_at = (datetime.now(timezone.utc) + timedelta(hours=REVIEW_DELAY_HOURS)).isoformat()
@@ -518,6 +546,31 @@ def save_answer(
             review_at,
             reason="Scheduled review — previously answered incorrectly",
         )
+    # Online mastery update: shift the per-(student, subject, topic) EMA
+    # toward the new answer. First-time rows are initialised from the global
+    # model's prediction so the EMA starts at a learned prior, not 0.5.
+    prior = _prior_mastery(sid, question.subject, question.topic)
+    _update_ema(
+        sid, question.subject, question.topic, int(bool(correct)), prior_mastery=prior
+    )
+    return attempt_id
+
+
+def _prior_mastery(sid: str, subject: str, topic: str) -> float | None:
+    """Best available mastery prior from the global model for a single topic."""
+    model = model_path()
+    if model is None:
+        return None
+    attempts = user_attempts(sid)
+    if attempts.empty:
+        return None
+    p = predict_student_mastery(model, attempts, questions_df(), sid)
+    if p.empty:
+        return None
+    rows = p[(p.subject == subject) & (p.topic == topic)]
+    if rows.empty:
+        return None
+    return float(rows.mastery_probability.iloc[0])
 
 
 def next_question(
@@ -1056,7 +1109,7 @@ def _finalize(
         correct = bool(answer == question.correct_answer)
         score = None
         feedback = None
-    save_answer(
+    attempt_id = save_answer(
         sid,
         question,
         correct,
@@ -1092,6 +1145,7 @@ def _finalize(
         "timed_out": timed_out,
         "before": st.session_state.get("mastery_before"),
         "after": after,
+        "attempt_id": attempt_id,
     }
 
 
@@ -1164,6 +1218,21 @@ def _result_panel(question: pd.Series) -> None:
                 f"({arrow} {abs(delta):.0%}). Difficulty adapts from your next item.</div>",
                 unsafe_allow_html=True,
             )
+    if st.session_state.get("user_id") and res.get("attempt_id"):
+        from database.db import record_feedback
+        fb = st.session_state.get(f"feedback_{res['attempt_id']}")
+        if fb is None:
+            c1, c2, _ = st.columns([1, 1, 6])
+            if c1.button("👍 Useful", key=f"fb_up_{res['attempt_id']}"):
+                record_feedback(res["attempt_id"], st.session_state.user_id, useful=True)
+                st.session_state[f"feedback_{res['attempt_id']}"] = "up"
+                st.rerun()
+            if c2.button("👎 Not useful", key=f"fb_dn_{res['attempt_id']}"):
+                record_feedback(res["attempt_id"], st.session_state.user_id, useful=False)
+                st.session_state[f"feedback_{res['attempt_id']}"] = "down"
+                st.rerun()
+        else:
+            st.caption(f"Feedback recorded: {'👍' if fb == 'up' else '👎'}")
 
 
 def _session_summary(sid: str, q: pd.DataFrame, session: dict) -> None:
@@ -1894,6 +1963,8 @@ def main() -> None:
     )
     inject_styles()
     q = setup()
+    if not session_valid():
+        st.toast("Your session expired. Please sign in again.", icon="🔒")
     page = _sidebar()
 
     if page == "Profile":

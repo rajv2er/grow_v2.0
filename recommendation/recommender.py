@@ -7,6 +7,7 @@ import pandas as pd
 
 from config import DATABASE_PATH
 from database.db import connection
+from observability import log, timed
 from recommendation.adaptive_difficulty import TARGET_BAND, target_difficulty_rating
 
 
@@ -56,13 +57,16 @@ def recommend_questions(
             ),
         })
     result = pd.DataFrame(records).sort_values("score", ascending=False).drop_duplicates("question_id").head(limit).reset_index(drop=True)
-    if not result.empty:
-        with connection(db_path) as conn:
-            # Snapshot semantics: the table always reflects the latest plan per student.
-            conn.execute("DELETE FROM recommendations WHERE student_id=?", (student_id,))
-            conn.executemany(
-                """INSERT INTO recommendations(student_id, question_id, subject, topic,
-                   recommended_difficulty, reason, score, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                [(r.student_id, r.question_id, r.subject, r.topic, r.recommended_difficulty, r.reason, r.score, datetime.now(timezone.utc).isoformat()) for r in result.itertuples(index=False)],
-            )
+    log.info("recommend student=%s limit=%d n_predictions=%d n_attempts=%d", student_id, limit, len(predictions), len(student_attempts))
+    with timed("recommend_questions", student=student_id):
+        if not result.empty:
+            with connection(db_path) as conn:
+                # Snapshot semantics: the table always reflects the latest plan per student.
+                conn.execute("DELETE FROM recommendations WHERE student_id=?", (student_id,))
+                conn.executemany(
+                    """INSERT INTO recommendations(student_id, question_id, subject, topic,
+                       recommended_difficulty, reason, score, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    [(r.student_id, r.question_id, r.subject, r.topic, r.recommended_difficulty, r.reason, r.score, datetime.now(timezone.utc).isoformat()) for r in result.itertuples(index=False)],
+                )
+        log.info("recommend done student=%s n_returned=%d", student_id, len(result))
     return result

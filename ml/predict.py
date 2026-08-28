@@ -11,6 +11,7 @@ import pandas as pd
 from config import DATABASE_PATH
 from database.db import connection
 from ml.feature_engineering import CATEGORICAL_FEATURES, NUMERIC_FEATURES, current_topic_feature_rows
+from observability import log, timed
 
 
 def status_for_probability(probability: float) -> str:
@@ -34,23 +35,28 @@ def explain_weakness(row: pd.Series) -> dict:
 
 
 def predict_student_mastery(model_path: Path, attempts: pd.DataFrame, questions: pd.DataFrame, student_id: str, db_path: Path = DATABASE_PATH) -> pd.DataFrame:
-    model = joblib.load(model_path)
-    feature_rows = current_topic_feature_rows(attempts, student_id, questions)
+    log.info("predict student=%s model=%s n_attempts=%d", student_id, model_path.stem, len(attempts))
+    with timed("model_load", path=str(model_path)):
+        model = joblib.load(model_path)
+    with timed("feature_rows", student=student_id):
+        feature_rows = current_topic_feature_rows(attempts, student_id, questions)
     probabilities = model.predict_proba(feature_rows[NUMERIC_FEATURES + CATEGORICAL_FEATURES])[:, 1]
     result = feature_rows.copy()
     result["mastery_probability"] = probabilities
     result["status"] = result.mastery_probability.map(status_for_probability)
     result["explanation"] = result.apply(explain_weakness, axis=1)
     result["data_label"] = "Predictions based on SYNTHETIC / SIMULATED practice data"
-    with connection(db_path) as conn:
-        # Snapshot semantics: keep only the latest prediction set per student and model.
-        conn.execute("DELETE FROM mastery_predictions WHERE student_id=? AND model_name=?", (student_id, model_path.stem))
-        rows = [(
-            student_id, r.subject, r.topic, float(r.mastery_probability), r.status,
-            model_path.stem, datetime.now(timezone.utc).isoformat(), json.dumps(r.explanation),
-        ) for r in result.itertuples(index=False)]
-        conn.executemany(
-            """INSERT INTO mastery_predictions(student_id, subject, topic, mastery_probability,
-               status, model_name, predicted_at, explanation_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", rows,
-        )
+    with timed("db_write_predictions", rows=len(result), student=student_id):
+        with connection(db_path) as conn:
+            # Snapshot semantics: keep only the latest prediction set per student and model.
+            conn.execute("DELETE FROM mastery_predictions WHERE student_id=? AND model_name=?", (student_id, model_path.stem))
+            rows = [(
+                student_id, r.subject, r.topic, float(r.mastery_probability), r.status,
+                model_path.stem, datetime.now(timezone.utc).isoformat(), json.dumps(r.explanation),
+            ) for r in result.itertuples(index=False)]
+            conn.executemany(
+                """INSERT INTO mastery_predictions(student_id, subject, topic, mastery_probability,
+                   status, model_name, predicted_at, explanation_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", rows,
+            )
+    log.info("predict done student=%s n_topics=%d mean_mastery=%.3f", student_id, len(result), float(result.mastery_probability.mean()) if not result.empty else 0.0)
     return result.sort_values(["mastery_probability", "subject", "topic"]).reset_index(drop=True)
