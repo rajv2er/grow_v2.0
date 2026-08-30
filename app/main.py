@@ -1119,6 +1119,9 @@ def dashboard_page(q: pd.DataFrame) -> None:
             st.caption("No recommendations available — try answering more questions.")
         else:
             for i, row in enumerate(recs.itertuples(index=False), 1):
+                doc_key = (row.subject, row.topic)
+                show_doc = st.session_state.get("_today_doc") == doc_key
+                # Top row: numbered topic + meta + right-side pills
                 st.markdown(
                     f"<div class='ml-card'>"
                     f"<div style='display:flex;justify-content:space-between;align-items:flex-start;gap:12px'>"
@@ -1131,6 +1134,31 @@ def dashboard_page(q: pd.DataFrame) -> None:
                     f"</div>",
                     unsafe_allow_html=True,
                 )
+                # Two compact buttons: documentation toggle + start session
+                b1, b2 = st.columns(2)
+                with b1:
+                    if st.button(
+                        "📖 Documentation" if not show_doc else "✕ Close documentation",
+                        key=f"today_doc_{i}_{row.subject}_{row.topic}",
+                        width="stretch",
+                    ):
+                        st.session_state._today_doc = None if show_doc else doc_key
+                        st.rerun()
+                with b2:
+                    if st.button(
+                        "Start session",
+                        key=f"today_practise_{i}_{row.subject}_{row.topic}",
+                        type="primary",
+                        width="stretch",
+                    ):
+                        st.session_state.page = "Practice"
+                        st.session_state._prefill_topic = (row.subject, row.topic)
+                        st.rerun()
+                if show_doc:
+                    st.markdown(
+                        _render_topic_doc_card(q, p, row.subject, row.topic),
+                        unsafe_allow_html=True,
+                    )
 
 
 # ---------------------------------------------------------------------------
@@ -1607,32 +1635,96 @@ def progress_page(q: pd.DataFrame) -> None:
         st.info("Sign in to view your progress.")
         return
     sid = st.session_state.user_id
+    name = st.session_state.get("user_name", "Learner")
     attempts = user_attempts(sid)
     p = predictions_for(sid, attempts, q)
 
-    st.markdown("<h2 style='margin-bottom:0'>My progress</h2>"
-                "<p style='color:#9aa6c0;margin-top:4px'>All values come from your attempt history and trained model predictions.</p>",
-                unsafe_allow_html=True)
+    # --- Hero summary --------------------------------------------------------
+    first = name.split()[0]
+    streak = streak_days(attempts)
+    overall = float(p.mastery_probability.mean()) if not p.empty else (
+        float(attempts.is_correct.mean()) if not attempts.empty else 0.0
+    )
+    n_attempts = len(attempts)
+    accuracy = float(attempts.is_correct.mean()) if not attempts.empty else 0.0
+    n_topics = int(p.topic.nunique()) if not p.empty else 0
+    n_mastered = (
+        int((p.mastery_probability >= SUBJECT_MASTERY_THRESHOLD).sum())
+        if not p.empty else 0
+    )
+    avg_time = float(attempts.time_taken_seconds.mean()) if not attempts.empty else 0.0
+
+    st.markdown(
+        f"<h2 style='margin-bottom:0'>My progress, {first}.</h2>"
+        f"<p style='color:#9aa6c0;margin-top:4px'>All values come from your attempt history and the trained mastery model — never fabricated.</p>",
+        unsafe_allow_html=True,
+    )
+
     if attempts.empty:
         empty_state("No attempts yet", "Practise a few questions to populate progress analytics.")
         return
 
-    section_label("Overall learning curve")
+    # KPI strip
+    st.markdown(
+        "<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0 6px 0'>"
+        + kpi("Overall mastery", f"{overall:.0%}", "From ML predictions" if not p.empty else None)
+        + kpi("Questions attempted", f"{n_attempts:,}")
+        + kpi("Streak", f"🔥 {streak} day{'s' if streak != 1 else ''}")
+        + kpi("Accuracy", f"{accuracy:.0%}")
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # --- Learning curve (full width, taller) --------------------------------
+    section_label("Mastery over time")
     curve = learning_curve_frame(attempts)
-    if not curve.empty and curve.shape[0] >= 2:
-        st.line_chart(curve, height=240, width="stretch")
-    else:
+    if curve.empty or curve.shape[0] < 2:
         st.caption("Need a few attempts before the learning curve becomes informative.")
-
-    section_label("Subject comparison")
-    if not p.empty:
-        subj = p.groupby("subject").mastery_probability.mean().reindex(SUBJECTS)
-        st.bar_chart(subj, height=240, width="stretch")
     else:
-        st.caption("Train the ML baseline to see subject comparison.")
+        st.line_chart(curve, height=280, width="stretch")
 
+    # --- Subject mastery (5 cards in a strip) -------------------------------
+    section_label("Subject mastery")
+    if p.empty:
+        st.caption("Train the ML baseline in ML Experiments to see per-subject mastery.")
+    else:
+        subj_cols = st.columns(5)
+        for col, subject in zip(subj_cols, SUBJECTS):
+            mastery = (
+                float(p[p.subject == subject].mastery_probability.mean())
+                if (p.subject == subject).any() else 0.0
+            )
+            subj_attempts = attempts[attempts.subject == subject]
+            sub_acc = float(subj_attempts.is_correct.mean()) if not subj_attempts.empty else 0.0
+            with col:
+                st.markdown(
+                    f"<div class='ml-subject-card'>"
+                    f"<div class='name'>{subject}</div>"
+                    f"<div class='pct'>{mastery:.0%}</div>"
+                    f"<div class='ml-progress'><div style='width:{mastery*100:.1f}%'></div></div>"
+                    f"<div style='color:#9aa6c0;font-size:0.78rem;margin-top:8px'>"
+                    f"{len(subj_attempts)} attempt(s) · {sub_acc:.0%} observed</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+    # --- Difficulty + response time side by side ----------------------------
+    section_label("Difficulty performance")
+    diff_acc = attempts.groupby("difficulty").is_correct.mean().reindex(["Easy", "Medium", "Hard"]).fillna(0)
+    diff_time = attempts.groupby("difficulty").time_taken_seconds.mean().reindex(["Easy", "Medium", "Hard"]).fillna(0)
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("<div class='ml-section-label'>Accuracy by difficulty</div>", unsafe_allow_html=True)
+        st.bar_chart(diff_acc, height=240, width="stretch")
+    with c2:
+        st.markdown("<div class='ml-section-label'>Avg response time (seconds)</div>", unsafe_allow_html=True)
+        st.bar_chart(diff_time, height=240, width="stretch")
+
+    # --- Topic mastery heatmap ------------------------------------------------
     section_label("Topic mastery heatmap")
-    if not p.empty:
+    if p.empty:
+        st.caption("No predictions available.")
+    else:
         heat = p.pivot_table(
             index="subject", columns="topic", values="mastery_probability", aggfunc="mean"
         ).reindex(SUBJECTS)
@@ -1640,20 +1732,32 @@ def progress_page(q: pd.DataFrame) -> None:
             heat.style.format("{:.0%}", na_rep="—").background_gradient(cmap="RdYlGn", vmin=0, vmax=1),
             width="stretch",
         )
-    else:
-        st.caption("No predictions available.")
 
-    section_label("Difficulty performance")
-    diff_acc = attempts.groupby("difficulty").is_correct.mean().reindex(["Easy", "Medium", "Hard"])
-    diff_time = attempts.groupby("difficulty").time_taken_seconds.mean().reindex(["Easy", "Medium", "Hard"])
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("<div class='ml-section-label'>Accuracy by difficulty</div>", unsafe_allow_html=True)
-        st.bar_chart(diff_acc, height=220, width="stretch")
-    with c2:
-        st.markdown("<div class='ml-section-label'>Avg response time (s)</div>", unsafe_allow_html=True)
-        st.bar_chart(diff_time, height=220, width="stretch")
+    # --- Quick reference to documentation ------------------------------------
+    section_label("Quick reference")
+    st.caption("External documentation for every topic. Open one to refresh before the next session.")
+    refs = _get_topic_links  # alias
+    seen_subjects: dict[str, list[str]] = {s: [] for s in SUBJECTS}
+    for s in SUBJECTS:
+        for t in sorted(p[p.subject == s].topic.unique()) if not p.empty else []:
+            seen_subjects[s].append(t)
+    ref_cols = st.columns(2)
+    for col, subject in zip(ref_cols, SUBJECTS[:2]):
+        with col:
+            items = "".join(
+                f"<div style='padding:6px 0;border-bottom:1px solid #1f2a44'>"
+                f"<div style='font-weight:600'>{_html_escape(topic)}</div>"
+                f"<div style='color:#9aa6c0;font-size:0.78rem'>{len(refs(subject, topic))} link(s)</div></div>"
+                for topic in seen_subjects[subject]
+            ) or "<div style='color:#9aa6c0'>No topics yet.</div>"
+            st.markdown(
+                f"<div class='ml-card' style='padding:10px 14px'>"
+                f"<div style='color:#9aa6c0;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px'>{subject}</div>"
+                f"{items}</div>",
+                unsafe_allow_html=True,
+            )
 
+    # --- Recent attempts table (styled) --------------------------------------
     section_label("Recent attempts")
     recent = attempts.sort_values("timestamp", ascending=False).head(15)[
         ["timestamp", "subject", "topic", "difficulty", "is_correct", "time_taken_seconds"]
@@ -1773,40 +1877,51 @@ def recommendations_page(q: pd.DataFrame) -> None:
             st.success(f"{queued} question(s) scheduled.")
 
 
-def _render_inline_doc(q: pd.DataFrame, p: pd.DataFrame, subject: str, name: str) -> None:
+def _render_topic_doc_card(q: pd.DataFrame, p: pd.DataFrame, subject: str, name: str) -> str:
+    """Return an HTML card with the topic's external documentation links + mastery.
+
+    Used by the Dashboard Today plan and the Recommendations page. Compact
+    version — no "Questions in this topic" listing, no Start practice button.
+    """
     mastery = None
     if not p.empty:
         rows = p[(p.subject == subject) & (p.topic == name)]
         if not rows.empty:
             mastery = float(rows.mastery_probability.iloc[0])
     mastery_html = (
-        f"<div style='text-align:right'><div style='font-size:1.4rem;font-weight:700'>{mastery:.0%}</div>"
-        f"<div style='color:#9aa6c0;font-size:0.75rem'>predicted mastery</div></div>"
+        f"<div style='text-align:right'><div style='font-size:1.2rem;font-weight:700'>{mastery:.0%}</div>"
+        f"<div style='color:#9aa6c0;font-size:0.7rem'>predicted mastery</div></div>"
         if mastery is not None
-        else "<div style='color:#9aa6c0'>mastery not yet estimated</div>"
+        else "<div style='color:#9aa6c0;font-size:0.8rem'>mastery not yet estimated</div>"
     )
     links = _get_topic_links(subject, name)
-    links_html = (
-        "".join(
+    if links:
+        links_html = "".join(
             f"<a href='{url}' target='_blank' rel='noopener noreferrer' "
             f"style='display:inline-block;margin:4px 6px 4px 0;padding:6px 10px;border-radius:8px;"
             f"background:#16213b;border:1px solid #2b3a5e;color:#c7d2fe;text-decoration:none;"
-            f"font-size:0.8rem'>{label} ↗</a>"
+            f"font-size:0.8rem'>{_html_escape(label)} ↗</a>"
             for label, url in links
         )
-        if links
-        else "<div style='color:#9aa6c0;font-size:0.85rem'>No external references mapped for this topic yet.</div>"
-    )
-    st.markdown(
+    else:
+        links_html = (
+            "<div style='color:#9aa6c0;font-size:0.85rem'>"
+            "No external references mapped for this topic yet.</div>"
+        )
+    return (
         f"<div class='ml-card-elev' style='border-left:3px solid #6366f1'>"
         f"<div style='display:flex;justify-content:space-between;align-items:flex-start;gap:16px'>"
-        f"<div><div style='font-size:1.05rem;font-weight:600'>Read about {name}</div>"
-        f"<div style='color:#9aa6c0;margin-top:2px'>{subject} · external references</div></div>"
+        f"<div><div style='font-size:1.05rem;font-weight:600'>Read about {_html_escape(name)}</div>"
+        f"<div style='color:#9aa6c0;margin-top:2px'>{_html_escape(subject)} · external references</div></div>"
         f"{mastery_html}</div>"
         f"<div style='margin-top:10px'>{links_html}</div>"
-        f"</div>",
-        unsafe_allow_html=True,
+        f"</div>"
     )
+
+
+def _render_inline_doc(q: pd.DataFrame, p: pd.DataFrame, subject: str, name: str) -> None:
+    """Full version: doc card + the topic's questions + Start practice button."""
+    st.markdown(_render_topic_doc_card(q, p, subject, name), unsafe_allow_html=True)
     topic_qs = q[(q.subject == subject) & (q.topic == name)].sort_values(["difficulty", "question_id"])
     type_label = {"MCQ": "Choice", "Subjective": "Written"}
     if not topic_qs.empty:
