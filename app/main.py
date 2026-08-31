@@ -64,7 +64,7 @@ SUBJECT_SHORT = {
 SUBJECT_MASTERY_THRESHOLD = 0.75
 MIN_QUESTIONS_PER_SUBJECT = 5
 TOPIC_HOLD_QUESTIONS = 3
-SESSION_LENGTH = 5
+SESSION_LENGTH = 10
 TIME_LIMITS = {"Easy": 90, "Medium": 120, "Hard": 150}
 SUBJECTIVE_TIME_LIMIT = 240
 REVIEW_DELAY_HOURS = 24
@@ -77,15 +77,20 @@ STATUSES_FOR_PRIORITY = [("HIGH", 0.45), ("MEDIUM", 0.65), ("LOW", 1.01)]
 # ---------------------------------------------------------------------------
 
 PALETTE = {
-    "bg": "#0b1020",
-    "surface": "#111a2e",
-    "surface_alt": "#16213b",
-    "border": "#1f2a44",
-    "border_strong": "#2b3a5e",
-    "text": "#e6ecf7",
-    "text_muted": "#9aa6c0",
-    "accent": "#6366f1",
-    "accent_soft": "#818cf8",
+    "bg": "#0a0b14",
+    "bg2": "#10122a",
+    "surface": "#161a36",
+    "surface_alt": "#1d2244",
+    "border": "#2a2f5a",
+    "border_strong": "#3a4180",
+    "text": "#f4f6ff",
+    "text_muted": "#9aa0c5",
+    # Multi-accent palette — each one used for a different affordance.
+    "violet": "#a855f7",
+    "magenta": "#ec4899",
+    "cyan": "#06b6d4",
+    "lime": "#84cc16",
+    "amber": "#f59e0b",
     "success": "#22c55e",
     "warning": "#f59e0b",
     "danger": "#ef4444",
@@ -93,30 +98,40 @@ PALETTE = {
 
 
 def inject_styles() -> None:
+    """Inject a vibrant dark-SaaS design system.
+
+    Multiple saturated accents (violet, magenta, cyan, lime, amber) on a
+    deep navy base. Each card family uses a different accent for its
+    accent-bar so the UI feels alive without being noisy.
+    """
     st.markdown(
         f"""
         <style>
         :root {{
             --ml-bg: {PALETTE['bg']};
+            --ml-bg2: {PALETTE['bg2']};
             --ml-surface: {PALETTE['surface']};
             --ml-surface-alt: {PALETTE['surface_alt']};
             --ml-border: {PALETTE['border']};
             --ml-border-strong: {PALETTE['border_strong']};
             --ml-text: {PALETTE['text']};
             --ml-muted: {PALETTE['text_muted']};
-            --ml-accent: {PALETTE['accent']};
-            --ml-accent-soft: {PALETTE['accent_soft']};
+            --ml-violet: {PALETTE['violet']};
+            --ml-magenta: {PALETTE['magenta']};
+            --ml-cyan: {PALETTE['cyan']};
+            --ml-lime: {PALETTE['lime']};
+            --ml-amber: {PALETTE['amber']};
             --ml-success: {PALETTE['success']};
             --ml-warning: {PALETTE['warning']};
             --ml-danger: {PALETTE['danger']};
         }}
         html, body, [class*="css"]  {{ font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }}
         .stApp {{
-            background: linear-gradient(180deg, #0a0f1f 0%, #0b1020 100%);
+            background: radial-gradient(ellipse at top, #1b1f4a 0%, #0a0b14 55%);
             color: var(--ml-text);
         }}
         [data-testid="stSidebar"] {{
-            background: #0a1024;
+            background: linear-gradient(180deg, #0d0f24 0%, #0a0b14 100%);
             border-right: 1px solid var(--ml-border);
         }}
         [data-testid="stSidebar"] .stMarkdown h1,
@@ -132,11 +147,11 @@ def inject_styles() -> None:
             margin-bottom: 12px;
         }}
         .ml-card-elev {{
-            background: linear-gradient(180deg, #131d36 0%, #0f182d 100%);
+            background: linear-gradient(180deg, #1c2049 0%, #14172f 100%);
             border: 1px solid var(--ml-border-strong);
             border-radius: 14px;
             padding: 20px;
-            box-shadow: 0 1px 0 rgba(255,255,255,0.02), 0 8px 24px rgba(0,0,0,0.25);
+            box-shadow: 0 1px 0 rgba(255,255,255,0.04), 0 8px 28px rgba(168,85,247,0.10);
         }}
         .ml-section-label {{
             color: var(--ml-muted);
@@ -147,34 +162,48 @@ def inject_styles() -> None:
             margin: 18px 0 8px 0;
         }}
         .ml-kpi {{
-            background: var(--ml-surface);
-            border: 1px solid var(--ml-border);
+            background: linear-gradient(135deg, rgba(168,85,247,0.18), rgba(236,72,153,0.10));
+            border: 1px solid var(--ml-border-strong);
             border-radius: 14px;
             padding: 16px 18px;
         }}
-        .ml-kpi .label {{ color: var(--ml-muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; }}
-        .ml-kpi .value {{ color: var(--ml-text); font-size: 1.7rem; font-weight: 700; margin-top: 4px; }}
+        .ml-kpi .label {{ color: #c7d2fe; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; }}
+        .ml-kpi .value {{ color: var(--ml-text); font-size: 1.7rem; font-weight: 700; margin-top: 4px;
+            background: linear-gradient(135deg, #c084fc 0%, #f472b6 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }}
         .ml-kpi .delta {{ font-size: 0.8rem; margin-top: 2px; }}
         .ml-subject-card {{
-            background: var(--ml-surface);
+            background: linear-gradient(160deg, var(--ml-surface) 0%, var(--ml-surface-alt) 100%);
             border: 1px solid var(--ml-border);
             border-radius: 14px;
             padding: 16px;
-            transition: border-color 0.15s ease, transform 0.15s ease;
+            transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
         }}
-        .ml-subject-card:hover {{ border-color: var(--ml-accent-soft); transform: translateY(-1px); }}
-        .ml-subject-card .name {{ color: var(--ml-muted); font-size: 0.78rem; letter-spacing: 0.1em; text-transform: uppercase; }}
-        .ml-subject-card .pct {{ color: var(--ml-text); font-size: 1.6rem; font-weight: 700; }}
-        .ml-progress {{ height: 6px; background: #1a2540; border-radius: 4px; overflow: hidden; margin-top: 8px; }}
-        .ml-progress > div {{ height: 100%; background: linear-gradient(90deg, var(--ml-accent), var(--ml-accent-soft)); border-radius: 4px; }}
-        .ml-pill {{ display:inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 600; }}
-        .ml-pill.up {{ color: #4ade80; background: rgba(34,197,94,0.12); }}
-        .ml-pill.down {{ color: #f87171; background: rgba(239,68,68,0.12); }}
-        .ml-pill.flat {{ color: var(--ml-muted); background: rgba(154,166,192,0.12); }}
-        .ml-pill.synthetic {{ color: #fcd34d; background: rgba(245,158,11,0.15); }}
-        .ml-pill.weak {{ color: #f87171; background: rgba(239,68,68,0.15); }}
-        .ml-pill.dev {{ color: #fbbf24; background: rgba(245,158,11,0.15); }}
-        .ml-pill.strong {{ color: #4ade80; background: rgba(34,197,94,0.15); }}
+        .ml-subject-card:hover {{
+            border-color: var(--ml-violet);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(168,85,247,0.18);
+        }}
+        .ml-subject-card .name {{ color: #c7d2fe; font-size: 0.78rem; letter-spacing: 0.1em; text-transform: uppercase; }}
+        .ml-subject-card .pct {{
+            color: var(--ml-text); font-size: 1.6rem; font-weight: 700; margin-top: 4px;
+            background: linear-gradient(135deg, #c084fc 0%, #67e8f9 100%);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+        }}
+        .ml-progress {{ height: 8px; background: #1a1f3a; border-radius: 4px; overflow: hidden; margin-top: 8px; }}
+        .ml-progress > div {{
+            height: 100%;
+            background: linear-gradient(90deg, #a855f7 0%, #ec4899 50%, #06b6d4 100%);
+            border-radius: 4px;
+            box-shadow: 0 0 12px rgba(168,85,247,0.45);
+        }}
+        .ml-pill {{ display:inline-block; padding: 2px 10px; border-radius: 999px; font-size: 0.72rem; font-weight: 600; }}
+        .ml-pill.up {{ color: #86efac; background: rgba(34,197,94,0.18); border:1px solid rgba(34,197,94,0.35); }}
+        .ml-pill.down {{ color: #fca5a5; background: rgba(239,68,68,0.18); border:1px solid rgba(239,68,68,0.35); }}
+        .ml-pill.flat {{ color: #c7d2fe; background: rgba(99,102,241,0.18); border:1px solid rgba(99,102,241,0.35); }}
+        .ml-pill.synthetic {{ color: #fde68a; background: rgba(245,158,11,0.18); border:1px solid rgba(245,158,11,0.4); }}
+        .ml-pill.weak {{ color: #fca5a5; background: rgba(239,68,68,0.20); border:1px solid rgba(239,68,68,0.45); }}
+        .ml-pill.dev {{ color: #fde68a; background: rgba(245,158,11,0.18); border:1px solid rgba(245,158,11,0.4); }}
+        .ml-pill.strong {{ color: #86efac; background: rgba(34,197,94,0.18); border:1px solid rgba(34,197,94,0.4); }}
         .ml-empty {{
             text-align: center; color: var(--ml-muted); padding: 40px 20px;
             background: var(--ml-surface); border: 1px dashed var(--ml-border-strong);
@@ -182,28 +211,55 @@ def inject_styles() -> None:
         }}
         .ml-banner {{
             padding: 10px 14px; border-radius: 10px; font-size: 0.85rem;
-            background: rgba(245,158,11,0.10); color: #fcd34d; border: 1px solid rgba(245,158,11,0.25);
+            background: linear-gradient(90deg, rgba(245,158,11,0.18), rgba(236,72,153,0.12));
+            color: #fde68a; border: 1px solid rgba(245,158,11,0.35);
             margin-bottom: 12px;
         }}
-        .ml-sidebar-brand {{ font-size: 1.15rem; font-weight: 700; color: var(--ml-text); margin: 0; }}
-        .ml-sidebar-tag {{ font-size: 0.7rem; color: var(--ml-muted); letter-spacing: 0.12em; text-transform: uppercase; }}
+        .ml-sidebar-brand {{ font-size: 1.15rem; font-weight: 700; color: var(--ml-text); margin: 0;
+            background: linear-gradient(135deg, #c084fc 0%, #67e8f9 100%);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }}
+        .ml-sidebar-tag {{ font-size: 0.7rem; color: #c084fc; letter-spacing: 0.12em; text-transform: uppercase; }}
         .ml-profile-card {{
-            background: var(--ml-surface-alt); border: 1px solid var(--ml-border);
+            background: linear-gradient(135deg, rgba(168,85,247,0.20), rgba(6,182,212,0.15));
+            border: 1px solid var(--ml-border-strong);
             border-radius: 12px; padding: 12px 14px; margin-top: auto;
         }}
         .ml-profile-card .name {{ color: var(--ml-text); font-weight: 600; font-size: 0.95rem; }}
-        .ml-profile-card .meta {{ color: var(--ml-muted); font-size: 0.75rem; }}
+        .ml-profile-card .meta {{ color: #c7d2fe; font-size: 0.75rem; }}
         .stButton>button, .stDownloadButton>button {{
             border-radius: 10px; font-weight: 600; border: 1px solid var(--ml-border-strong);
-            background: var(--ml-surface-alt); color: var(--ml-text);
+            background: var(--ml-surface); color: var(--ml-text);
+            transition: all 0.12s ease;
         }}
-        .stButton>button:hover {{ border-color: var(--ml-accent-soft); color: var(--ml-text); }}
+        .stButton>button:hover {{
+            border-color: var(--ml-violet);
+            background: rgba(168,85,247,0.10);
+            color: var(--ml-text);
+        }}
         .stButton>button[kind="primary"] {{
-            background: linear-gradient(135deg, #6366f1, #4f46e5); border: 1px solid #4f46e5; color: white;
+            background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+            border: 1px solid transparent; color: white;
+            box-shadow: 0 4px 14px rgba(168,85,247,0.35);
         }}
-        .stButton>button[kind="primary"]:hover {{ filter: brightness(1.08); color: white; }}
+        .stButton>button[kind="primary"]:hover {{
+            filter: brightness(1.12); color: white;
+            box-shadow: 0 6px 20px rgba(236,72,153,0.45);
+        }}
         [data-testid="stMetricValue"] {{ color: var(--ml-text); }}
-        .stProgress > div > div > div > div {{ background: var(--ml-accent); }}
+        .stProgress > div > div > div > div {{
+            background: linear-gradient(90deg, #a855f7, #ec4899, #06b6d4);
+        }}
+        /* Accent-bar variants for cards */
+        .accent-violet {{ border-left: 3px solid var(--ml-violet) !important; }}
+        .accent-magenta {{ border-left: 3px solid var(--ml-magenta) !important; }}
+        .accent-cyan {{ border-left: 3px solid var(--ml-cyan) !important; }}
+        .accent-lime {{ border-left: 3px solid var(--ml-lime) !important; }}
+        .accent-amber {{ border-left: 3px solid var(--ml-amber) !important; }}
+        .text-violet {{ color: var(--ml-violet); }}
+        .text-magenta {{ color: var(--ml-magenta); }}
+        .text-cyan {{ color: var(--ml-cyan); }}
+        .text-lime {{ color: var(--ml-lime); }}
+        .text-amber {{ color: var(--ml-amber); }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -1039,13 +1095,13 @@ def dashboard_page(q: pd.DataFrame) -> None:
             if wl_expl and wl_expl.get("signals"):
                 top_signal = wl_expl["signals"][0]["label"]
             st.markdown(
-                f"<div class='ml-card-elev' style='border-left:3px solid #f59e0b;min-height:160px'>"
+                f"<div class='ml-card-elev accent-amber' style='min-height:160px'>"
                 f"<div style='display:flex;justify-content:space-between;align-items:flex-start;gap:12px'>"
-                f"<div><div style='color:#f59e0b;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.08em;font-weight:600'>⚠ Needs attention</div>"
+                f"<div><div class='text-amber' style='font-size:0.78rem;text-transform:uppercase;letter-spacing:0.08em;font-weight:600'>⚠ Needs attention</div>"
                 f"<div style='font-size:1.4rem;font-weight:600;margin-top:6px'>{weakest.subject} → {weakest.topic}</div>"
-                f"<div style='color:#9aa6c0;font-size:0.88rem;margin-top:4px'>{wl_mastery:.0%} mastery</div>"
+                f"<div style='color:#9aa0c5;font-size:0.88rem;margin-top:4px'>{wl_mastery:.0%} mastery</div>"
                 f"<div style='color:#cbd5e1;font-size:0.85rem;margin-top:10px'>{_html_escape(top_signal) if top_signal else 'Practise this topic to bring mastery up.'}</div></div>"
-                f"<div style='font-size:1.6rem;font-weight:700;color:#f87171;min-width:60px;text-align:right'>{wl_mastery:.0%}</div></div>"
+                f"<div style='font-size:1.6rem;font-weight:700;color:#fb923c;min-width:60px;text-align:right'>{wl_mastery:.0%}</div></div>"
                 f"<div style='margin-top:14px'>",
                 unsafe_allow_html=True,
             )
@@ -1066,13 +1122,13 @@ def dashboard_page(q: pd.DataFrame) -> None:
         if continue_topic is not None:
             cl_mastery = float(continue_topic.mastery_probability)
             st.markdown(
-                f"<div class='ml-card-elev' style='border-left:3px solid #6366f1;min-height:160px'>"
+                f"<div class='ml-card-elev accent-cyan' style='min-height:160px'>"
                 f"<div style='display:flex;justify-content:space-between;align-items:flex-start;gap:12px'>"
-                f"<div><div style='color:#818cf8;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.08em;font-weight:600'>🎯 Continue learning</div>"
+                f"<div><div class='text-cyan' style='font-size:0.78rem;text-transform:uppercase;letter-spacing:0.08em;font-weight:600'>🎯 Continue learning</div>"
                 f"<div style='font-size:1.4rem;font-weight:600;margin-top:6px'>{continue_topic.subject} → {continue_topic.topic}</div>"
-                f"<div style='color:#9aa6c0;font-size:0.88rem;margin-top:4px'>{cl_mastery:.0%} mastery</div>"
+                f"<div style='color:#9aa0c5;font-size:0.88rem;margin-top:4px'>{cl_mastery:.0%} mastery</div>"
                 f"<div style='color:#cbd5e1;font-size:0.85rem;margin-top:10px'>A focused session on this topic will move the needle the most.</div></div>"
-                f"<div style='font-size:1.6rem;font-weight:700;color:#a5b4fc;min-width:60px;text-align:right'>{cl_mastery:.0%}</div></div>"
+                f"<div style='font-size:1.6rem;font-weight:700;color:#67e8f9;min-width:60px;text-align:right'>{cl_mastery:.0%}</div></div>"
                 f"<div style='margin-top:14px'>",
                 unsafe_allow_html=True,
             )

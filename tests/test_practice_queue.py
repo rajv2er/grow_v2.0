@@ -87,5 +87,5 @@ def test_migration_rebuilds_legacy_questions_table(tmp_path):
     legacy = check.execute("SELECT difficulty_rating, question_type FROM questions WHERE question_id='QLEG01'").fetchone()
     assert legacy == (0.25, "MCQ")
     subjective = check.execute("SELECT COUNT(*) FROM questions WHERE question_type='Subjective'").fetchone()[0]
-    assert subjective == 50
+    assert subjective == 60
     check.close()

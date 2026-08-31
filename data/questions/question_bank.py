@@ -113,35 +113,56 @@ def build_question_bank() -> list[dict]:
     # FillInBlank, Numerical. 10 per type, distributed across the existing
     # topics so each topic has a new-style question to surface.
     questions.extend(_build_extended_types(TOPIC_FACTS))
-    assert len(questions) == 240, f"Expected 200 base + 40 extended = 240, got {len(questions)}."
+    assert len(questions) == 300, f"Expected 200 base + 100 extended = 300, got {len(questions)}."
     return questions
 
 
 def _build_extended_types(facts: dict) -> list[dict]:
-    """Author 10 questions per new type: TrueFalse, MultipleSelect, FillInBlank, Numerical."""
+    """Author 20 questions per new type: TrueFalse, MultipleSelect, FillInBlank, Numerical.
+
+    Two rounds of 10 per type, with the second round covering the topics
+    NOT touched by the first round, so every topic in the bank gets at
+    least one non-MCQ question of each archetype where it makes sense.
+    """
     out: list[dict] = []
     flat = [(s, t, fact, base)
             for s, items in facts.items() for (t, fact, _dist, base) in items]
-    # Take 10 distinct (subject, topic) entries spanning all subjects.
-    chosen = []
-    for subj in ("DSA", "DBMS", "Operating Systems", "Computer Networks", "Software Engineering"):
-        for s, t, fact, base in flat:
-            if s == subj and (s, t) not in chosen:
-                chosen.append((s, t, fact, base))
-                break
-        if len(chosen) >= 10:
-            break
-    if len(chosen) < 10:
-        for s, t, fact, base in flat:
-            if (s, t) not in chosen:
-                chosen.append((s, t, fact, base))
-            if len(chosen) >= 10:
-                break
-    chosen = chosen[:10]
     rating = {"Easy": 0.25, "Medium": 0.55, "Hard": 0.85}
 
-    # 10 True/False: a single True statement of the topic fact.
-    for i, (subj, topic, fact, base) in enumerate(chosen, start=1):
+    def _pick(n: int, skip: set) -> list:
+        chosen = []
+        for s, t, fact, base in flat:
+            if (s, t) in skip or (s, t) in {(x[0], x[1]) for x in chosen}:
+                continue
+            chosen.append((s, t, fact, base))
+            if len(chosen) >= n:
+                break
+        if len(chosen) < n:
+            for s, t, fact, base in flat:
+                if (s, t) in {(x[0], x[1]) for x in chosen}:
+                    continue
+                chosen.append((s, t, fact, base))
+                if len(chosen) >= n:
+                    break
+        return chosen[:n]
+
+    # === ROUND 1: original 10 per type, mirror of the prior patch ===
+    chosen1: list = []
+    for subj in ("DSA", "DBMS", "Operating Systems", "Computer Networks", "Software Engineering"):
+        for s, t, fact, base in flat:
+            if s == subj and (s, t) not in {(x[0], x[1]) for x in chosen1}:
+                chosen1.append((s, t, fact, base))
+                break
+    if len(chosen1) < 10:
+        for s, t, fact, base in flat:
+            if (s, t) not in {(x[0], x[1]) for x in chosen1}:
+                chosen1.append((s, t, fact, base))
+            if len(chosen1) >= 10:
+                break
+    chosen1 = chosen1[:10]
+
+    # 10 True/False (round 1)
+    for i, (subj, topic, fact, base) in enumerate(chosen1, start=1):
         out.append({
             "question_id": f"QTF{i:02d}", "subject": subj, "topic": topic,
             "question": f"True or False: {fact[0].upper() + fact[1:]}.",
@@ -152,9 +173,7 @@ def _build_extended_types(facts: dict) -> list[dict]:
             "explanation": f"Correct. {fact.capitalize()}.",
         })
 
-    # 10 Multiple-select: pick 2-3 correct from 4 statements. correct_answers_json
-    # stores the sorted list of correct option letters.
-    multi_data = [
+    multi_data_1 = [
         ("DSA", "Arrays", ["elements are stored at contiguous addresses", "lookup by index is O(n)", "size can change dynamically", "memory is allocated as a single block"], ["A", "D"]),
         ("DSA", "Linked Lists", ["each node holds data and a link", "nodes are at arbitrary addresses", "indexing is O(1)", "deletion at head is O(1)"], ["A", "B", "D"]),
         ("DBMS", "SQL", ["SELECT reads rows", "UPDATE modifies rows", "DROP creates a backup", "INSERT adds new rows"], ["A", "B", "D"]),
@@ -166,7 +185,7 @@ def _build_extended_types(facts: dict) -> list[dict]:
         ("Software Engineering", "Testing", ["unit tests target small components", "integration tests cover modules together", "a test plan is a build script", "regression tests catch new breakage"], ["A", "B", "D"]),
         ("Software Engineering", "Agile", ["iterative delivery", "frequent customer feedback", "no planning phase at all", "small cross-functional teams"], ["A", "B", "D"]),
     ]
-    for i, (subj, topic, options, correct) in enumerate(multi_data, start=1):
+    for i, (subj, topic, options, correct) in enumerate(multi_data_1, start=1):
         out.append({
             "question_id": f"QMS{i:02d}", "subject": subj, "topic": topic,
             "question": f"Select ALL statements that are true about {topic}.",
@@ -178,9 +197,7 @@ def _build_extended_types(facts: dict) -> list[dict]:
             "correct_answers_json": json.dumps(correct),
         })
 
-    # 10 Fill-in-the-blank: a sentence with a single blank. blanks_json stores
-    # a list of accepted answers (lowercase). The fact provides the answer.
-    fib_data = [
+    fib_data_1 = [
         ("DSA", "Recursion", "Every recursive function must have a ___ case to terminate.", "base"),
         ("DSA", "Trees", "In a binary search tree, the left subtree contains keys ___ than the root.", "smaller"),
         ("DBMS", "Normalization", "The goal of normalization is to reduce data ___ and update anomalies.", "redundancy"),
@@ -192,7 +209,7 @@ def _build_extended_types(facts: dict) -> list[dict]:
         ("Software Engineering", "SDLC", "The ___ describes the phases used to develop and maintain software.", "sdlc"),
         ("Software Engineering", "UML", "A UML ___ diagram models classes and their relationships.", "class"),
     ]
-    for i, (subj, topic, prompt, answer) in enumerate(fib_data, start=1):
+    for i, (subj, topic, prompt, answer) in enumerate(fib_data_1, start=1):
         out.append({
             "question_id": f"QFB{i:02d}", "subject": subj, "topic": topic,
             "question": prompt,
@@ -204,9 +221,7 @@ def _build_extended_types(facts: dict) -> list[dict]:
             "blanks_json": json.dumps([answer, answer.capitalize()]),
         })
 
-    # 10 Numerical: a small computation with a tolerance. expected_value is
-    # the canonical answer; tolerance is the allowed relative error.
-    num_data = [
+    num_data_1 = [
         ("DSA", "Arrays", "An array of 8 bytes per element starts at address 1000. What is the address of the 4th element (0-indexed)?", 1024, 0.0),
         ("DSA", "Hashing", "A hash table of size 10 stores key 47 with hash h(k)=k mod 10. What is its index?", 7, 0.0),
         ("Operating Systems", "CPU Scheduling", "Round-robin with quantum 4 ms, 3 processes of 10 ms each. What is the average waiting time (ms)?", 12, 0.05),
@@ -218,7 +233,7 @@ def _build_extended_types(facts: dict) -> list[dict]:
         ("Software Engineering", "Testing", "You write 50 unit tests; 46 pass. What percentage passed (whole number)?", 92, 0.0),
         ("Software Engineering", "SDLC", "How many phases are in the classic Waterfall model (counting requirements through maintenance)?", 6, 0.05),
     ]
-    for i, (subj, topic, prompt, expected, tolerance) in enumerate(num_data, start=1):
+    for i, (subj, topic, prompt, expected, tolerance) in enumerate(num_data_1, start=1):
         out.append({
             "question_id": f"QNU{i:02d}", "subject": subj, "topic": topic,
             "question": prompt,
@@ -230,6 +245,172 @@ def _build_extended_types(facts: dict) -> list[dict]:
             "expected_value": float(expected),
             "tolerance": float(tolerance),
         })
+
+    # === ROUND 2: 10 more per type, different topics, more variety ===
+    chosen2 = _pick(10, {(c[0], c[1]) for c in chosen1})
+
+    # Round 2 True/False: negation style so they're not all the same phrasing.
+    for i, (subj, topic, fact, base) in enumerate(chosen2, start=11):
+        out.append({
+            "question_id": f"QTF{i:02d}", "subject": subj, "topic": topic,
+            "question": f"True or False: It is NOT the case that {fact[0].lower() + fact[1:]}",
+            "question_type": "TrueFalse", "difficulty": base,
+            "difficulty_rating": rating[base],
+            "option_a": "True", "option_b": "False", "option_c": None, "option_d": None,
+            "correct_answer": "B", "model_answer": None,
+            "explanation": f"The original statement is true, so its negation is false. {fact.capitalize()}.",
+        })
+
+    multi_data_2 = [
+        ("DSA", "Strings", ["immutable in many languages", "support concatenation with +", "stored as a 2D array of chars", "have a length property"], ["A", "B", "D"]),
+        ("DSA", "Stack & Queue", ["LIFO ordering", "push and pop are O(1)", "useful for recursion", "best for random access by index"], ["A", "B", "C"]),
+        ("DBMS", "Joins", ["INNER JOIN drops unmatched rows", "LEFT JOIN keeps all left rows", "FULL OUTER JOIN is not in standard SQL", "JOIN runs in the WHERE clause by default"], ["A", "B", "D"]),
+        ("DBMS", "Keys", ["primary key uniquely identifies a row", "a foreign key references another table's primary key", "any column can be a primary key", "composite keys use multiple columns"], ["A", "B", "D"]),
+        ("Operating Systems", "Memory Management", ["contiguous allocation supports base+limit", "paging avoids external fragmentation", "segmentation uses variable-sized units", "swapping moves processes to disk"], ["A", "B", "C", "D"]),
+        ("Operating Systems", "Synchronization", ["a mutex provides mutual exclusion", "semaphores can be binary or counting", "spinlocks block the process on contention", "monitors encapsulate shared state"], ["A", "B", "D"]),
+        ("Computer Networks", "HTTP", ["HTTP is a request-response protocol", "HTTPS adds TLS on top of HTTP", "HTTP/2 multiplexes streams", "HTTP is connection-oriented like TCP"], ["A", "B", "C"]),
+        ("Computer Networks", "Routing", ["OSPF is a link-state protocol", "BGP is the internet's exterior gateway protocol", "distance vector uses Bellman-Ford", "static routes always beat dynamic ones"], ["A", "B", "C"]),
+        ("Software Engineering", "Design Patterns", ["Singleton restricts instantiation to one", "Observer notifies dependents", "MVC separates model, view, controller", "Factory creates a family of related objects"], ["A", "B", "C", "D"]),
+        ("Software Engineering", "Git/Version Control", ["commits are immutable", "branches are pointers to commits", "rebasing rewrites history", "merge always creates a fast-forward"], ["A", "B", "C"]),
+    ]
+    for i, (subj, topic, options, correct) in enumerate(multi_data_2, start=11):
+        out.append({
+            "question_id": f"QMS{i:02d}", "subject": subj, "topic": topic,
+            "question": f"Which of the following apply to {topic}? (Select ALL.)",
+            "question_type": "MultipleSelect", "difficulty": "Medium",
+            "difficulty_rating": rating["Medium"],
+            "option_a": options[0], "option_b": options[1], "option_c": options[2], "option_d": options[3],
+            "correct_answer": None, "model_answer": None,
+            "explanation": f"Correct answers: {', '.join(correct)}. " + " ".join(options[ord(c) - ord('A')] for c in correct) + ".",
+            "correct_answers_json": json.dumps(correct),
+        })
+
+    fib_data_2 = [
+        ("DSA", "Hashing", "A good hash function distributes keys ___ across the table.", "uniformly"),
+        ("DSA", "Graphs", "BFS uses a ___ while DFS uses a stack.", "queue"),
+        ("DBMS", "ER Model", "In an ER diagram, a ___ connects two entities and represents an interaction.", "relationship"),
+        ("DBMS", "Relational Algebra", "The ___ operation combines rows from two relations based on a condition.", "join"),
+        ("Operating Systems", "CPU Scheduling", "FCFS stands for First-Come, First-___.", "served"),
+        ("Operating Systems", "File Systems", "An ___ is a logical block allocation unit on disk.", "inode"),
+        ("Computer Networks", "DHCP", "DHCP dynamically assigns IP ___, subnet mask, and gateway.", "addresses"),
+        ("Computer Networks", "Network Security", "A ___ filters traffic between networks based on rules.", "firewall"),
+        ("Software Engineering", "Waterfall", "In Waterfall, each phase must be ___ before the next begins.", "completed"),
+        ("Software Engineering", "Software Quality", "___ testing verifies the system meets its requirements.", "acceptance"),
+    ]
+    for i, (subj, topic, prompt, answer) in enumerate(fib_data_2, start=11):
+        out.append({
+            "question_id": f"QFB{i:02d}", "subject": subj, "topic": topic,
+            "question": prompt,
+            "question_type": "FillInBlank", "difficulty": "Easy",
+            "difficulty_rating": rating["Easy"],
+            "option_a": None, "option_b": None, "option_c": None, "option_d": None,
+            "correct_answer": None, "model_answer": None,
+            "explanation": f"The missing word is '{answer}'.",
+            "blanks_json": json.dumps([answer, answer.capitalize()]),
+        })
+
+    num_data_2 = [
+        ("DSA", "Strings", "ASCII encodes each character in 8 bits. How many distinct characters can plain ASCII represent?", 128, 0.0),
+        ("DSA", "Stack & Queue", "A circular queue of capacity 8 has front=3, rear=5. After 2 enqueues the new rear index (mod 8) is?", 7, 0.0),
+        ("DBMS", "Joins", "Two tables A and B have 10 and 5 rows respectively. The cross join A × B has how many rows?", 50, 0.0),
+        ("DBMS", "Keys", "How many columns are in a composite key with 3 attributes?", 3, 0.0),
+        ("Operating Systems", "Deadlocks", "How many of Coffman's conditions are required for a deadlock (hold-and-wait, no-preemption, circular wait, mutual exclusion)?", 4, 0.0),
+        ("Operating Systems", "Memory Management", "A system has 16 KB pages and a 32-bit address space. How many page-table entries are needed?", 1048576, 0.0),
+        ("Computer Networks", "HTTP", "HTTP status code 404 means?", 404, 0.0),
+        ("Computer Networks", "TCP", "TCP's three-way handshake uses how many packets to establish a connection?", 3, 0.0),
+        ("Software Engineering", "UML", "How many basic relationship types are there in a UML class diagram (association, inheritance, realization, dependency)?", 4, 0.0),
+        ("Software Engineering", "Project Management", "A project has 100 story points; 4 engineers each work 5 days at 5 points/day. How many days to finish?", 1, 0.0),
+    ]
+    for i, (subj, topic, prompt, expected, tolerance) in enumerate(num_data_2, start=11):
+        out.append({
+            "question_id": f"QNU{i:02d}", "subject": subj, "topic": topic,
+            "question": prompt,
+            "question_type": "Numerical", "difficulty": "Medium",
+            "difficulty_rating": rating["Medium"],
+            "option_a": None, "option_b": None, "option_c": None, "option_d": None,
+            "correct_answer": None, "model_answer": None,
+            "explanation": f"Expected answer: {expected} (relative tolerance {tolerance:.0%}).",
+            "expected_value": float(expected),
+            "tolerance": float(tolerance),
+        })
+
+    # === 10 new MCQs (Hand-written, cross-subject) ===
+    new_mcqs = [
+        # (subject, topic, difficulty, prompt, A, B, C, D, correct_letter, explanation)
+        ("DSA", "Stack & Queue", "Easy",
+         "Which data structure follows Last-In-First-Out (LIFO) order?",
+         "Stack", "Queue", "Hash table", "Linked list", "A",
+         "Stack pushes and pops from the top, giving LIFO order."),
+        ("DSA", "Trees", "Medium",
+         "What is the worst-case time complexity of searching in an unbalanced binary search tree with n nodes?",
+         "O(log n)", "O(n)", "O(n log n)", "O(1)", "B",
+         "An unbalanced BST can degenerate into a linked list, giving O(n) search."),
+        ("DSA", "Dynamic Programming", "Hard",
+         "Memoisation primarily helps with which problem property?",
+         "Greedy choice", "Optimal substructure with overlapping subproblems", "Random access only", "Hash collisions", "B",
+         "DP applies when optimal solutions combine optimal sub-solutions and subproblems repeat."),
+        ("DBMS", "Joins", "Easy",
+         "Which JOIN keeps all rows from the left table and only matching rows from the right?",
+         "INNER JOIN", "LEFT JOIN", "RIGHT JOIN", "CROSS JOIN", "B",
+         "LEFT JOIN preserves all left rows; right-side columns are NULL when no match."),
+        ("DBMS", "Normalization", "Medium",
+         "Which normal form removes transitive functional dependencies?",
+         "1NF", "2NF", "3NF", "BCNF", "C",
+         "Third Normal Form eliminates transitive dependencies (non-key attr -> non-key attr)."),
+        ("DBMS", "Indexing", "Hard",
+         "A clustered index determines the ___ order of a table's data rows.",
+         "logical", "physical", "lexicographic only", "alphabetical only", "B",
+         "A clustered index sorts the table's actual data rows on disk by the indexed column."),
+        ("Operating Systems", "Memory Management", "Easy",
+         "Which allocation scheme suffers from external fragmentation?",
+         "Paging", "Segmentation", "Buddy system", "Slab allocator", "B",
+         "Variable-sized segments can leave external holes between allocated blocks."),
+        ("Operating Systems", "File Systems", "Medium",
+         "Which data structure is typically used to map file paths to on-disk inodes?",
+         "Stack", "B+ tree", "Hash table", "Linked list", "B",
+         "Most file systems use a B+ tree for directory entries for ordered range queries."),
+        ("Operating Systems", "I/O Management", "Hard",
+         "DMA stands for?",
+         "Direct Memory Access", "Dual Mode Addressing", "Dynamic Memory Allocation", "Device Mode Arbitration", "A",
+         "DMA lets peripherals transfer data to/from memory without CPU involvement."),
+        ("Computer Networks", "Routing", "Easy",
+         "Which routing protocol is path-vector based and used between autonomous systems on the internet?",
+         "OSPF", "RIP", "BGP", "EIGRP", "C",
+         "BGP is the de-facto inter-AS routing protocol using path-vector semantics."),
+    ]
+    for i, (subj, topic, diff, prompt, a, b, c, d, correct, expl) in enumerate(new_mcqs, start=1):
+        out.append({
+            "question_id": f"QMC2{i:02d}", "subject": subj, "topic": topic,
+            "question": prompt, "question_type": "MCQ", "difficulty": diff,
+            "difficulty_rating": rating[diff],
+            "option_a": a, "option_b": b, "option_c": c, "option_d": d,
+            "correct_answer": correct, "model_answer": None,
+            "explanation": expl,
+        })
+
+    # === 10 new Subjectives (Hand-written, cross-subject) ===
+    new_subjective = [
+        ("DSA", "Dynamic Programming", "Hard", "Pick a classic DP problem (Knapsack, LCS, or Edit Distance) and walk through its recurrence. Explain what the subproblems represent and why the table is filled bottom-up."),
+        ("DBMS", "Transactions", "Hard", "Describe the ACID properties with one concrete example each. Why is isolation difficult to achieve without serializability, and what does the database trade off?"),
+        ("Operating Systems", "Deadlocks", "Hard", "Explain the four Coffman conditions. For Banker's algorithm, describe what the safety check does and why it must run on every resource request."),
+        ("Computer Networks", "TCP", "Hard", "Walk through TCP's three-way handshake. Why is a three-step exchange (and not two) required to establish a connection? What does each side learn?"),
+        ("Software Engineering", "Design Patterns", "Hard", "Pick one pattern (Observer, Strategy, or Decorator). Describe the problem it solves, the structure (roles and responsibilities), and a real-world example you would implement it for."),
+        ("DSA", "Graphs", "Medium", "Compare BFS and DFS for: (a) finding shortest path in an unweighted graph, (b) detecting cycles, (c) topological sort. When would you choose one over the other?"),
+        ("DBMS", "Indexing", "Medium", "Why does adding an index speed up reads but slow down writes? Describe the cost trade-off in terms of storage, write amplification, and query planner behaviour."),
+        ("Operating Systems", "Synchronization", "Medium", "Compare mutexes, semaphores, and monitors. Give a concrete scenario where each is the right primitive and explain why."),
+        ("Computer Networks", "HTTP", "Medium", "Explain the differences between HTTP/1.1, HTTP/2, and HTTP/3 at the transport and framing layer. What problem does each generation solve?"),
+        ("Software Engineering", "Testing", "Medium", "Differentiate unit, integration, system, and acceptance testing. Give one example test you would write at each level for a small login API."),
+    ]
+    for i, (subj, topic, diff, prompt) in enumerate(new_subjective, start=1):
+        out.append({
+            "question_id": f"QSUB2{i:02d}S", "subject": subj, "topic": topic,
+            "question": prompt, "question_type": "Subjective", "difficulty": diff,
+            "difficulty_rating": rating[diff],
+            "option_a": None, "option_b": None, "option_c": None, "option_d": None,
+            "correct_answer": None, "model_answer": prompt,
+            "explanation": f"A strong answer covers the core idea, uses a concrete example, and connects to a real-world trade-off or trade-off the system would make.",
+        })
+
     return out
 
 
